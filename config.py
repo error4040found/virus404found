@@ -11,8 +11,8 @@ APP_DESCRIPTION = "Automated service to sync LeadPier data to LE API"
 APP_VERSION = "1.0.0"
 
 # Server Configuration
-HOST = "0.0.0.0"
-PORT = 8000
+HOST = os.getenv("HOST", "0.0.0.0")
+PORT = int(os.getenv("PORT", 8000))  # Railway provides PORT env variable
 RELOAD = False
 LOG_LEVEL = "info"
 
