@@ -1,23 +1,31 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-.env
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
 .venv/
 venv/
 env/
-ENV/
-logs/
-*.log
-source.json
-.DS_Store
-.idea/
+
+# IDE
 .vscode/
+.idea/
 *.swp
 *.swo
-*~
-.pytest_cache/
-.coverage
-htmlcov/
-dist/
-build/
-*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database (SQLite is created at runtime on Railway)
+database/*.db
+database/*.json
+
+# Logs
+logs/
+*.log
