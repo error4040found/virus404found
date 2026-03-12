@@ -1,5 +1,5 @@
 /* ================================================================
-   dashboard.js  –  Pinpointe Campaign Dashboard (FastAPI frontend)
+   dashboard.js  –  Shakta Campaign Dashboard (FastAPI frontend)
    ================================================================ */
 
 let currentView   = 'today';   // 'today' | 'range'
