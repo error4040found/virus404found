@@ -383,12 +383,14 @@ async def api_sync_revenue(
 @app.get("/analytics", response_class=HTMLResponse)
 async def analytics_page(request: Request):
     """Visual analytics page with charts."""
+    domains = get_all_domains()
     return templates.TemplateResponse(
         "analytics.html",
         {
             "request": request,
             "role": request.session.get("role", "user"),
             "username": request.session.get("username", ""),
+            "domains": domains,
         },
     )
 

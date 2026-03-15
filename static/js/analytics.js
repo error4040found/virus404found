@@ -58,7 +58,6 @@ const DOMAIN_BG = [
 // ─── Bootstrap ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     initDates(7);
-    loadDomainList();
     bindEvents();
     loadAnalytics();
 });
@@ -162,19 +161,6 @@ async function loadAnalytics() {
         analyticsData = data;
         renderKPIs(data.totals);
         renderAllCharts(data);
-
-        // Populate domain dropdown if still empty
-        const sel = document.getElementById('domain-select');
-        if (sel.options.length <= 1) {
-            // Try from unfiltered analytics data first
-            if (!data.selectedDomain && data.domains && data.domains.length) {
-                populateDomainDropdown(data.domains);
-            }
-            // If still empty, fetch /api/domains directly (session should be active now)
-            if (sel.options.length <= 1) {
-                loadDomainList();
-            }
-        }
 
         document.getElementById('kpi-bar').style.display      = 'grid';
         document.getElementById('revenue-bar').style.display   = 'grid';
