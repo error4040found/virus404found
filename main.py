@@ -532,9 +532,14 @@ async def api_spillover(
       2) %{MMDD}-{SHORT_CODE}% on `date` → revenue from today's campaigns only
     Spillover = total - today's campaigns.
     Returns live data, no DB involved.
+
+    Short codes are extracted from actual campaign names in the DB
+    (pattern: MMDD-{SHORT}-eN), not from the domain code suffix.
     """
     from leadpier_api import LeadpierAPI
     import asyncio
+    import re as _re
+    from datetime import timedelta as _td
 
     lp = LeadpierAPI()
     domains = get_all_domains()
@@ -542,26 +547,58 @@ async def api_spillover(
     # Build MMDD from the date (e.g. "2026-03-14" → "0314")
     mmdd = date[5:7] + date[8:10]
 
+    # Get campaigns from last 90 days to reliably map domain codes → actual short codes
+    # (not just the spillover date, since a domain may have no campaigns that day)
+    mapping_start = (datetime.strptime(date, "%Y-%m-%d") - _td(days=90)).strftime(
+        "%Y-%m-%d"
+    )
+    all_campaigns = get_campaigns_by_date_range(mapping_start, date)
+    # Build domain_code → set of short codes from campaign names
+    # Campaign name pattern: MMDD-{SHORT}-eN  (e.g. "0314-AFW-e4", "0314-fc-e5")
+    domain_shorts: dict[str, set[str]] = {}
+    pattern = _re.compile(r"^\d{4}-([a-zA-Z]+)-")
+    for c in all_campaigns:
+        m = pattern.match(c["campaign_name"])
+        if m:
+            domain_shorts.setdefault(c["domain_code"], set()).add(m.group(1).lower())
+
     async def fetch_domain_spillover(d):
         code = d["code"]  # e.g. "P2_AFW"
-        short = (code.split("_", 1)[1] if "_" in code else code).lower()  # e.g. "afw"
+        shorts = domain_shorts.get(code, set())
+
+        if not shorts:
+            # Fallback: derive from domain code suffix
+            shorts = {(code.split("_", 1)[1] if "_" in code else code).lower()}
 
         try:
-            # 1) Total domain revenue on this date
-            total_data = await lp.get_sources_filtered(date, date, f"%{short}%")
-            total_totals = total_data.get("totals", {})
-            total_revenue = float(total_totals.get("totalRevenue", 0) or 0)
-            total_visitors = int(total_totals.get("visitors", 0) or 0)
-            total_leads = int(total_totals.get("totalLeads", 0) or 0)
-            total_sold = int(total_totals.get("soldLeads", 0) or 0)
+            # Aggregate across all short codes for this domain
+            total_revenue = 0.0
+            total_visitors = 0
+            total_leads = 0
+            total_sold = 0
+            today_revenue = 0.0
+            today_visitors = 0
+            today_leads = 0
+            today_sold = 0
 
-            # 2) Today's campaigns only (source pattern: %MMDD-SHORT%)
-            today_data = await lp.get_sources_filtered(date, date, f"%{mmdd}-{short}%")
-            today_totals = today_data.get("totals", {})
-            today_revenue = float(today_totals.get("totalRevenue", 0) or 0)
-            today_visitors = int(today_totals.get("visitors", 0) or 0)
-            today_leads = int(today_totals.get("totalLeads", 0) or 0)
-            today_sold = int(today_totals.get("soldLeads", 0) or 0)
+            for short in shorts:
+                # 1) Total domain revenue on this date
+                total_data = await lp.get_sources_filtered(date, date, f"%{short}%")
+                tt = total_data.get("totals", {})
+                total_revenue += float(tt.get("totalRevenue", 0) or 0)
+                total_visitors += int(tt.get("visitors", 0) or 0)
+                total_leads += int(tt.get("totalLeads", 0) or 0)
+                total_sold += int(tt.get("soldLeads", 0) or 0)
+
+                # 2) Today's campaigns only (source pattern: %MMDD-SHORT%)
+                today_data = await lp.get_sources_filtered(
+                    date, date, f"%{mmdd}-{short}%"
+                )
+                td = today_data.get("totals", {})
+                today_revenue += float(td.get("totalRevenue", 0) or 0)
+                today_visitors += int(td.get("visitors", 0) or 0)
+                today_leads += int(td.get("totalLeads", 0) or 0)
+                today_sold += int(td.get("soldLeads", 0) or 0)
 
             return {
                 "code": code,

@@ -81,19 +81,35 @@ function getSelectedDomain() {
     return document.getElementById('domain-select').value || '';
 }
 
+function populateDomainDropdown(domains) {
+    const sel = document.getElementById('domain-select');
+    if (!sel || sel.options.length > 1) return;  // already populated
+    if (!domains || !domains.length) return;
+    domains.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.code;
+        opt.textContent = d.name;
+        sel.appendChild(opt);
+    });
+}
+
 async function loadDomainList() {
     try {
-        const res = await fetch('/api/domains');
+        const res = await fetch('/api/domains', { credentials: 'same-origin' });
+        if (!res.ok) return;
         const data = await res.json();
-        if (!data.success) { console.error('Domain list API error:', data); return; }
-        const sel = document.getElementById('domain-select');
-        data.domains.forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.code;
-            opt.textContent = d.name;
-            sel.appendChild(opt);
-        });
-    } catch (e) { console.error('Failed to load domain list:', e); }
+        if (data.success && data.domains) populateDomainDropdown(data.domains);
+    } catch (e) {
+        // Retry once after 1s
+        try {
+            await new Promise(r => setTimeout(r, 1000));
+            const res = await fetch('/api/domains', { credentials: 'same-origin' });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.success && data.domains) populateDomainDropdown(data.domains);
+            }
+        } catch (e2) { /* will populate from analytics fallback */ }
+    }
 }
 
 // ─── Event Binding ───────────────────────────────────────────────
@@ -147,15 +163,17 @@ async function loadAnalytics() {
         renderKPIs(data.totals);
         renderAllCharts(data);
 
-        // Fallback: populate domain dropdown from analytics data if still empty
+        // Populate domain dropdown if still empty
         const sel = document.getElementById('domain-select');
-        if (sel.options.length <= 1 && data.domains && data.domains.length) {
-            data.domains.forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.code;
-                opt.textContent = d.name;
-                sel.appendChild(opt);
-            });
+        if (sel.options.length <= 1) {
+            // Try from unfiltered analytics data first
+            if (!data.selectedDomain && data.domains && data.domains.length) {
+                populateDomainDropdown(data.domains);
+            }
+            // If still empty, fetch /api/domains directly (session should be active now)
+            if (sel.options.length <= 1) {
+                loadDomainList();
+            }
         }
 
         document.getElementById('kpi-bar').style.display      = 'grid';
