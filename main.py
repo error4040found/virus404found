@@ -57,6 +57,7 @@ from sync_service import (
     get_today_campaigns,
     get_campaigns_grouped,
     get_today_seed_campaigns,
+    get_today_test_campaigns,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -282,6 +283,32 @@ async def api_seeds_range(
     endDate: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
 ):
     domains = get_campaigns_grouped(startDate, endDate, seed_only=True)
+    return {
+        "success": True,
+        "startDate": startDate,
+        "endDate": endDate,
+        "timezone": TIMEZONE,
+        "domains": domains,
+    }
+
+
+@app.get("/api/testing/today")
+async def api_testing_today():
+    domains = get_today_test_campaigns()
+    return {
+        "success": True,
+        "date": datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y-%m-%d"),
+        "timezone": TIMEZONE,
+        "domains": domains,
+    }
+
+
+@app.get("/api/testing/range")
+async def api_testing_range(
+    startDate: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    endDate: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    domains = get_campaigns_grouped(startDate, endDate, test_only=True)
     return {
         "success": True,
         "startDate": startDate,

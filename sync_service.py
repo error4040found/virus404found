@@ -46,6 +46,11 @@ def _is_seed(name: str) -> bool:
     return "seed" in low or "wseed" in low or "iaseed" in low
 
 
+def _is_test(name: str) -> bool:
+    low = name.lower()
+    return "test" in low
+
+
 def _cutoff_date() -> str:
     tz = pytz.timezone(TIMEZONE)
     cutoff = datetime.now(tz) - timedelta(days=LIVE_DAYS + 1)
@@ -239,6 +244,7 @@ async def sync_campaigns(
                 if is_seed_flag:
                     seeds += 1
                 c["is_seed"] = 1 if is_seed_flag else 0
+                c["is_test"] = 1 if _is_test(c["campaign_name"]) else 0
 
                 live = _is_live(c_date)
 
@@ -398,9 +404,9 @@ def _get_revenue_map_for_dates(
 # Public read helpers (with revenue)
 # ------------------------------------------------------------------
 def get_campaigns_grouped(
-    start_date: str, end_date: str, seed_only: bool = False
+    start_date: str, end_date: str, seed_only: bool = False, test_only: bool = False
 ) -> list[dict]:
-    rows = get_campaigns_by_date_range(start_date, end_date, seed_only)
+    rows = get_campaigns_by_date_range(start_date, end_date, seed_only, test_only)
     # Gather campaign names and match against cached Leadpier data
     campaign_names = [r["campaign_name"] for r in rows]
     revenue_map = _get_revenue_map_for_dates(start_date, end_date, campaign_names)
@@ -415,3 +421,8 @@ def get_today_campaigns() -> list[dict]:
 def get_today_seed_campaigns() -> list[dict]:
     today = datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y-%m-%d")
     return get_campaigns_grouped(today, today, seed_only=True)
+
+
+def get_today_test_campaigns() -> list[dict]:
+    today = datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y-%m-%d")
+    return get_campaigns_grouped(today, today, test_only=True)

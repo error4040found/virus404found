@@ -3,7 +3,7 @@
    ================================================================ */
 
 let currentView   = 'today';   // 'today' | 'yesterday' | 'range'
-let currentReport = 'campaigns'; // 'campaigns' | 'seeds'
+let currentReport = 'campaigns'; // 'campaigns' | 'seeds' | 'testing'
 let isLoading     = false;
 let isSyncing     = false;
 
@@ -91,6 +91,16 @@ async function loadCampaigns() {
                 url = `/api/seeds/range?startDate=${yds}&endDate=${yds}`;
             } else {
                 url = `/api/seeds/range?startDate=${val('start-date')}&endDate=${val('end-date')}`;
+            }
+        } else if (currentReport === 'testing') {
+            if (currentView === 'today') {
+                url = '/api/testing/today';
+            } else if (currentView === 'yesterday') {
+                const yd = new Date(); yd.setDate(yd.getDate() - 1);
+                const yds = yd.toISOString().slice(0, 10);
+                url = `/api/testing/range?startDate=${yds}&endDate=${yds}`;
+            } else {
+                url = `/api/testing/range?startDate=${val('start-date')}&endDate=${val('end-date')}`;
             }
         } else {
             if (currentView === 'today') {

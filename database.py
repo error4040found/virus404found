@@ -104,6 +104,7 @@ class Campaign(Base):
     date = Column(String, nullable=False)
     time = Column(String, nullable=False)
     is_seed = Column(Integer, default=0)
+    is_test = Column(Integer, default=0)
     created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
     updated_at = Column(String, default=lambda: datetime.utcnow().isoformat())
 
@@ -461,6 +462,7 @@ def delete_domain(domain_id: int) -> bool:
 def upsert_campaign(domain_id: int, data: dict) -> int:
     statid = data.get("statid") or data.get("campaign_id")
     is_seed = data.get("is_seed", 0)
+    is_test = data.get("is_test", 0)
     session = get_session()
     try:
         campaign = (
@@ -474,6 +476,7 @@ def upsert_campaign(domain_id: int, data: dict) -> int:
             campaign.date = data["date"]
             campaign.time = data["time"]
             campaign.is_seed = is_seed
+            campaign.is_test = is_test
             campaign.updated_at = datetime.utcnow().isoformat()
         else:
             campaign = Campaign(
@@ -484,6 +487,7 @@ def upsert_campaign(domain_id: int, data: dict) -> int:
                 date=data["date"],
                 time=data["time"],
                 is_seed=is_seed,
+                is_test=is_test,
             )
             session.add(campaign)
         session.commit()
@@ -570,7 +574,7 @@ def get_campaign_count_by_date_range(start: str, end: str) -> int:
 
 
 def get_campaigns_by_date_range(
-    start: str, end: str, seed_only: bool = False
+    start: str, end: str, seed_only: bool = False, test_only: bool = False
 ) -> list[dict]:
     session = get_session()
     try:
@@ -585,6 +589,7 @@ def get_campaigns_by_date_range(
                 Campaign.date,
                 Campaign.time,
                 Campaign.is_seed,
+                Campaign.is_test,
                 CampaignStat.sends,
                 CampaignStat.opens,
                 CampaignStat.open_percent,
@@ -601,10 +606,13 @@ def get_campaigns_by_date_range(
             .filter(Campaign.date.between(start, end))
         )
 
-        if seed_only is True:
+        if test_only:
+            query = query.filter(Campaign.is_test == 1)
+        elif seed_only is True:
             query = query.filter(Campaign.is_seed == 1)
         elif seed_only is False:
             query = query.filter((Campaign.is_seed == 0) | (Campaign.is_seed.is_(None)))
+            query = query.filter((Campaign.is_test == 0) | (Campaign.is_test.is_(None)))
 
         query = query.order_by(Domain.name, Campaign.date.desc(), Campaign.time.desc())
 
@@ -620,6 +628,7 @@ def get_campaigns_by_date_range(
                 "date": r.date,
                 "time": r.time,
                 "is_seed": r.is_seed,
+                "is_test": r.is_test,
                 "sends": r.sends,
                 "opens": r.opens,
                 "open_percent": r.open_percent,
