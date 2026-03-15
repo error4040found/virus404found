@@ -85,7 +85,7 @@ async function loadDomainList() {
     try {
         const res = await fetch('/api/domains');
         const data = await res.json();
-        if (!data.success) return;
+        if (!data.success) { console.error('Domain list API error:', data); return; }
         const sel = document.getElementById('domain-select');
         data.domains.forEach(d => {
             const opt = document.createElement('option');
@@ -93,7 +93,7 @@ async function loadDomainList() {
             opt.textContent = d.name;
             sel.appendChild(opt);
         });
-    } catch (e) { /* ignore */ }
+    } catch (e) { console.error('Failed to load domain list:', e); }
 }
 
 // ─── Event Binding ───────────────────────────────────────────────
@@ -146,6 +146,18 @@ async function loadAnalytics() {
         analyticsData = data;
         renderKPIs(data.totals);
         renderAllCharts(data);
+
+        // Fallback: populate domain dropdown from analytics data if still empty
+        const sel = document.getElementById('domain-select');
+        if (sel.options.length <= 1 && data.domains && data.domains.length) {
+            data.domains.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.code;
+                opt.textContent = d.name;
+                sel.appendChild(opt);
+            });
+        }
+
         document.getElementById('kpi-bar').style.display      = 'grid';
         document.getElementById('revenue-bar').style.display   = 'grid';
         document.getElementById('charts-section').style.display = 'block';

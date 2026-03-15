@@ -2,7 +2,7 @@
    dashboard.js  –  Shakta Campaign Dashboard (FastAPI frontend)
    ================================================================ */
 
-let currentView   = 'today';   // 'today' | 'range'
+let currentView   = 'today';   // 'today' | 'yesterday' | 'range'
 let currentReport = 'campaigns'; // 'campaigns' | 'seeds'
 let isLoading     = false;
 let isSyncing     = false;
@@ -42,7 +42,7 @@ function bindEvents() {
         });
     });
 
-    // View buttons (Today / Range)
+    // View buttons (Today / Yesterday / Range)
     document.querySelectorAll('.view-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
             document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
@@ -83,21 +83,33 @@ async function loadCampaigns() {
 
         let url;
         if (currentReport === 'seeds') {
-            url = currentView === 'today'
-                ? '/api/seeds/today'
-                : `/api/seeds/range?startDate=${val('start-date')}&endDate=${val('end-date')}`;
+            if (currentView === 'today') {
+                url = '/api/seeds/today';
+            } else if (currentView === 'yesterday') {
+                const yd = new Date(); yd.setDate(yd.getDate() - 1);
+                const yds = yd.toISOString().slice(0, 10);
+                url = `/api/seeds/range?startDate=${yds}&endDate=${yds}`;
+            } else {
+                url = `/api/seeds/range?startDate=${val('start-date')}&endDate=${val('end-date')}`;
+            }
         } else {
-            url = currentView === 'today'
-                ? '/api/today'
-                : `/api/range?startDate=${val('start-date')}&endDate=${val('end-date')}`;
+            if (currentView === 'today') {
+                url = '/api/today';
+            } else if (currentView === 'yesterday') {
+                const yd = new Date(); yd.setDate(yd.getDate() - 1);
+                const yds = yd.toISOString().slice(0, 10);
+                url = `/api/range?startDate=${yds}&endDate=${yds}`;
+            } else {
+                url = `/api/range?startDate=${val('start-date')}&endDate=${val('end-date')}`;
+            }
         }
 
         const res  = await fetch(url);
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Load failed');
 
-        // Auto-sync if today view returns no data (first visit / new day)
-        if ((!data.domains || !data.domains.length) && currentView === 'today' && !isSyncing) {
+        // Auto-sync if today/yesterday view returns no data (first visit / new day)
+        if ((!data.domains || !data.domains.length) && (currentView === 'today' || currentView === 'yesterday') && !isSyncing) {
             isLoading = false;
             showLoading(false);
             await syncCampaigns();
@@ -107,8 +119,8 @@ async function loadCampaigns() {
         displayCampaigns(data.domains);
         updateLastSync();
 
-        // Fetch spillover data (live from Leadpier, only for today view)
-        if (currentView === 'today' && currentReport === 'campaigns') {
+        // Fetch spillover data (live from Leadpier, for today and yesterday views)
+        if ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns') {
             loadSpillover();
         }
     } catch (err) {
@@ -156,8 +168,14 @@ async function syncCampaigns() {
 // ─── Spillover: live Leadpier fetch ──────────────────────────────
 async function loadSpillover() {
     try {
-        const today = new Date().toISOString().slice(0, 10);
-        const res = await fetch(`/api/spillover?date=${today}`);
+        let dateStr;
+        if (currentView === 'yesterday') {
+            const yd = new Date(); yd.setDate(yd.getDate() - 1);
+            dateStr = yd.toISOString().slice(0, 10);
+        } else {
+            dateStr = new Date().toISOString().slice(0, 10);
+        }
+        const res = await fetch(`/api/spillover?date=${dateStr}`);
         const data = await res.json();
         if (!data.success) return;
 
@@ -262,7 +280,7 @@ function renderDomainPage() {
                     <span class="spill-stat"><strong>Spill Leads</strong> ${fmt(sp.spillover_leads)}</span>
                     <span class="spill-stat"><strong>Spill Sales</strong> ${fmt(sp.spillover_sold)}</span>
                 </div>
-            </div>` : (currentView === 'today' && currentReport === 'campaigns' && !Object.keys(spilloverData).length ?
+            </div>` : ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns' && !Object.keys(spilloverData).length ?
             `<div class="spillover-bar spillover-loading"><span class="spillover-spinner"></span> Loading spillover data…</div>` : '');
 
         return `

@@ -544,7 +544,7 @@ async def api_spillover(
 
     async def fetch_domain_spillover(d):
         code = d["code"]  # e.g. "P2_AFW"
-        short = code.split("_", 1)[1] if "_" in code else code  # e.g. "AFW"
+        short = (code.split("_", 1)[1] if "_" in code else code).lower()  # e.g. "afw"
 
         try:
             # 1) Total domain revenue on this date
