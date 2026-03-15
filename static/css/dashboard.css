@@ -350,6 +350,45 @@ body{
 
 /* percentage colours (set via JS inline style) */
 
+/* ── Spillover styles ─────────────────────────────────────────── */
+.accent-spillover .metric-value{color:#f59e0b}
+.accent-live-rev .metric-value{color:#34d399}
+
+.spillover-bar{
+  background:rgba(245,158,11,.06);
+  border-top:1px solid rgba(245,158,11,.2);
+  padding:.6rem 1rem;
+  border-radius:0 0 var(--radius) var(--radius);
+}
+.spillover-bar .spillover-title{
+  font-size:.72rem;font-weight:700;color:#fbbf24;
+  margin-bottom:.35rem;letter-spacing:.03em;
+}
+.spillover-bar .spillover-stats{
+  display:flex;flex-wrap:wrap;gap:.6rem 1.2rem;
+}
+.spillover-bar .spill-stat{
+  font-size:.75rem;color:var(--text-dim);
+}
+.spillover-bar .spill-stat strong{
+  color:var(--text);margin-right:.25rem;font-weight:600;
+}
+.spillover-bar .spill-highlight strong{color:#fbbf24}
+.spillover-bar .spill-highlight{color:#fbbf24;font-weight:600}
+
+.spillover-loading{
+  display:flex;align-items:center;gap:.5rem;
+  font-size:.75rem;color:var(--text-dim);
+}
+.spillover-spinner{
+  width:14px;height:14px;border:2px solid rgba(245,158,11,.3);
+  border-top-color:#f59e0b;border-radius:50%;
+  animation:spin .6s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.domain-card.collapsed .spillover-bar{display:none}
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media(max-width:768px){
   body{padding:0 .5rem 2rem}

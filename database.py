@@ -738,12 +738,13 @@ def get_leadpier_last_sync(report_date: str) -> Optional[str]:
 # Daily aggregated stats (for analytics charts)
 # ---------------------------------------------------------------------------
 def get_daily_aggregated_stats(
-    start: str, end: str, seed_only: bool = False
+    start: str, end: str, seed_only: bool = False, domain_code: str | None = None
 ) -> list[dict]:
     """
     Return campaign stats aggregated by date (for chart display).
     Each row: {date, sends, opens, clicks, bounces, unsubs,
                open_pct, click_pct}
+    Optionally filter by a single domain_code.
     """
     from sqlalchemy import func
 
@@ -764,6 +765,8 @@ def get_daily_aggregated_stats(
             .filter(Domain.enabled == 1)
             .filter(Campaign.date.between(start, end))
         )
+        if domain_code:
+            query = query.filter(Domain.code == domain_code)
         if seed_only is True:
             query = query.filter(Campaign.is_seed == 1)
         elif seed_only is False:

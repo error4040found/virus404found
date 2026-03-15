@@ -58,6 +58,7 @@ const DOMAIN_BG = [
 // ─── Bootstrap ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     initDates(7);
+    loadDomainList();
     bindEvents();
     loadAnalytics();
 });
@@ -76,10 +77,30 @@ function fmtShort(dateStr) {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function getSelectedDomain() {
+    return document.getElementById('domain-select').value || '';
+}
+
+async function loadDomainList() {
+    try {
+        const res = await fetch('/api/domains');
+        const data = await res.json();
+        if (!data.success) return;
+        const sel = document.getElementById('domain-select');
+        data.domains.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.code;
+            opt.textContent = d.name;
+            sel.appendChild(opt);
+        });
+    } catch (e) { /* ignore */ }
+}
+
 // ─── Event Binding ───────────────────────────────────────────────
 function bindEvents() {
     document.getElementById('load-btn').addEventListener('click', loadAnalytics);
     document.getElementById('sync-btn').addEventListener('click', syncAndLoad);
+    document.getElementById('domain-select').addEventListener('change', loadAnalytics);
 
     document.querySelectorAll('.range-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -102,13 +123,16 @@ function bindEvents() {
 async function loadAnalytics() {
     const startDate = document.getElementById('start-date').value;
     const endDate   = document.getElementById('end-date').value;
+    const domain    = getSelectedDomain();
     if (!startDate || !endDate) return;
 
     showLoading(true);
     hideError();
 
     try {
-        const res  = await fetch(`/api/analytics?startDate=${startDate}&endDate=${endDate}`);
+        let url = `/api/analytics?startDate=${startDate}&endDate=${endDate}`;
+        if (domain) url += `&domain=${encodeURIComponent(domain)}`;
+        const res  = await fetch(url);
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Failed to load analytics');
 
@@ -184,6 +208,7 @@ function renderAllCharts(data) {
     const daily   = data.daily   || [];
     const domains = data.domains || [];
     const labels  = daily.map(d => fmtShort(d.date));
+    const isDomainFiltered = !!data.selectedDomain;
 
     // Row 1 — Daily charts
     renderSendsChart(labels, daily);
@@ -200,13 +225,22 @@ function renderAllCharts(data) {
     renderCtrTrend(labels, daily);
     renderEcpmTrend(labels, daily);
 
-    // Row 4-5 — Domain comparison
-    renderDomainOpen(domains);
-    renderDomainCtr(domains);
-    renderDomainEcpm(domains);
-    renderDomainRevenue(domains);
-    renderDomainSends(domains);
-    renderDomainLeads(domains);
+    // Row 4-5 — Domain comparison (hide when single domain is selected)
+    const domainTitle = document.querySelector('.section-title');
+    const domainRows  = document.querySelectorAll('.domain-comparison-row');
+    if (isDomainFiltered) {
+        if (domainTitle) domainTitle.style.display = 'none';
+        domainRows.forEach(r => r.style.display = 'none');
+    } else {
+        if (domainTitle) domainTitle.style.display = '';
+        domainRows.forEach(r => r.style.display = '');
+        renderDomainOpen(domains);
+        renderDomainCtr(domains);
+        renderDomainEcpm(domains);
+        renderDomainRevenue(domains);
+        renderDomainSends(domains);
+        renderDomainLeads(domains);
+    }
 }
 
 // ─── Chart Builders ──────────────────────────────────────────────

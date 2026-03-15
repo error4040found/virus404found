@@ -107,6 +107,12 @@
         <input type="date" id="start-date" />
         <label>To</label>
         <input type="date" id="end-date" />
+        <div class="domain-filter">
+          <label>Domain</label>
+          <select id="domain-select">
+            <option value="">All Domains</option>
+          </select>
+        </div>
         <button id="load-btn" class="btn btn-accent">Load Charts</button>
       </div>
       <div class="quick-ranges">
@@ -307,7 +313,7 @@
 
       <!-- Row 4 — Domain Comparison: Open%, CTR%, eCPM by Domain -->
       <h2 class="section-title">Domain Performance Comparison</h2>
-      <div class="charts-row">
+      <div class="charts-row domain-comparison-row">
         <div class="chart-card">
           <div class="chart-header">
             <span class="chart-icon">📊</span>
@@ -332,7 +338,7 @@
       </div>
 
       <!-- Row 5 — Domain Comparison: Revenue, Sends, Leads by Domain -->
-      <div class="charts-row">
+      <div class="charts-row domain-comparison-row">
         <div class="chart-card">
           <div class="chart-header">
             <span class="chart-icon">💰</span>

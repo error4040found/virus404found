@@ -189,6 +189,67 @@ class LeadpierAPI:
         )
         return stats
 
+    async def get_sources_filtered(
+        self,
+        period_from: str,
+        period_to: str,
+        source_filter: str,
+    ) -> dict[str, Any]:
+        """
+        Fetch source-level revenue data filtered by a source pattern.
+        e.g. source_filter="%AFW%" returns all AFW sources.
+
+        Returns the full response data dict with 'statistics' and 'totals'.
+        """
+        token = await self._get_token()
+
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "authorization": f"bearer {token}",
+            "origin": "https://dash.leadpier.com",
+            "referer": "https://dash.leadpier.com/",
+        }
+        payload = {
+            "limit": 50,
+            "offset": 0,
+            "orderDirection": "DESC",
+            "orderBy": "source",
+            "periodFrom": period_from,
+            "periodTo": period_to,
+            "source": source_filter,
+        }
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                LEADPIER_DATA_URL,
+                json=payload,
+                headers=headers,
+            )
+
+            if resp.status_code in (401, 403):
+                logger.warning("Leadpier token rejected, re-authenticating...")
+                token = await self._authenticate()
+                headers["authorization"] = f"bearer {token}"
+                resp = await client.post(
+                    LEADPIER_DATA_URL,
+                    json=payload,
+                    headers=headers,
+                )
+
+            resp.raise_for_status()
+            data = resp.json()
+
+        result = data.get("data", {})
+        logger.info(
+            "Leadpier filtered (%s): %d sources for %s → %s",
+            source_filter,
+            result.get("count", 0),
+            period_from,
+            period_to,
+        )
+        return result
+
     # ─── Matching algorithm ─────────────────────────────────────
     @staticmethod
     def match_source_to_campaign(

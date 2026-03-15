@@ -46,6 +46,8 @@ from database import (
     delete_domain,
     cleanup_old_data,
     get_daily_aggregated_stats,
+    get_campaigns_by_date_range,
+    get_leadpier_sources_by_date,
 )
 from sync_service import (
     sync_today,
@@ -395,21 +397,44 @@ async def analytics_page(request: Request):
 async def api_analytics(
     startDate: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
     endDate: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    domain: str = Query(None),
 ):
-    """Return aggregated analytics data for charts: daily breakdown, domain breakdown, totals."""
-    # Daily aggregation
-    daily_rows = get_daily_aggregated_stats(startDate, endDate)
+    """Return aggregated analytics data for charts: daily breakdown, domain breakdown, totals.
+    Optional `domain` param filters by domain code (e.g. P2_LBE). Omit for all domains.
+    """
+    from leadpier_api import LeadpierAPI
+
+    # Daily aggregation (filtered by domain if specified)
+    daily_rows = get_daily_aggregated_stats(startDate, endDate, domain_code=domain)
+
+    # Build per-date campaign name sets when domain is filtered (for accurate Leadpier matching)
+    domain_camp_names_by_date = None
+    if domain:
+        all_campaigns = get_campaigns_by_date_range(startDate, endDate)
+        domain_campaigns = [r for r in all_campaigns if r["domain_code"] == domain]
+        domain_camp_names_by_date = {}
+        for r in domain_campaigns:
+            domain_camp_names_by_date.setdefault(r["date"], set()).add(
+                r["campaign_name"]
+            )
 
     # Load Leadpier revenue per date and merge into daily rows
-    from database import get_leadpier_sources_by_date
-    from datetime import timedelta as td
-
     for row in daily_rows:
         lp_sources = get_leadpier_sources_by_date(row["date"])
-        revenue = sum(float(s.get("totalRevenue", 0) or 0) for s in lp_sources)
-        visitors = sum(int(s.get("visitors", 0) or 0) for s in lp_sources)
-        total_leads = sum(int(s.get("totalLeads", 0) or 0) for s in lp_sources)
-        conversions = sum(int(s.get("soldLeads", 0) or 0) for s in lp_sources)
+
+        if domain and domain_camp_names_by_date is not None:
+            camp_names = list(domain_camp_names_by_date.get(row["date"], set()))
+            rev_map = LeadpierAPI.match_all_campaigns(lp_sources, camp_names)
+            revenue = sum(r["revenue"] for r in rev_map.values())
+            visitors = sum(r["visitors"] for r in rev_map.values())
+            total_leads = sum(r["leads"] for r in rev_map.values())
+            conversions = sum(r["sold_leads"] for r in rev_map.values())
+        else:
+            revenue = sum(float(s.get("totalRevenue", 0) or 0) for s in lp_sources)
+            visitors = sum(int(s.get("visitors", 0) or 0) for s in lp_sources)
+            total_leads = sum(int(s.get("totalLeads", 0) or 0) for s in lp_sources)
+            conversions = sum(int(s.get("soldLeads", 0) or 0) for s in lp_sources)
+
         sends = row["sends"]
         clicks = row["clicks"]
         row["revenue"] = round(revenue, 2)
@@ -423,6 +448,8 @@ async def api_analytics(
 
     # Domain breakdown — reuse existing grouped data
     domain_groups = get_campaigns_grouped(startDate, endDate)
+    if domain:
+        domain_groups = [dg for dg in domain_groups if dg["code"] == domain]
     domain_summary = []
     for dg in domain_groups:
         t = dg["totals"]
@@ -488,7 +515,87 @@ async def api_analytics(
         "daily": daily_rows,
         "domains": domain_summary,
         "totals": totals,
+        "selectedDomain": domain,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# API: Spillover — live Leadpier call (no DB caching)
+# ──────────────────────────────────────────────────────────────────────
+@app.get("/api/spillover")
+async def api_spillover(
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    """
+    For each enabled domain, call Leadpier twice:
+      1) %{SHORT_CODE}% on `date` → total domain revenue today
+      2) %{MMDD}-{SHORT_CODE}% on `date` → revenue from today's campaigns only
+    Spillover = total - today's campaigns.
+    Returns live data, no DB involved.
+    """
+    from leadpier_api import LeadpierAPI
+    import asyncio
+
+    lp = LeadpierAPI()
+    domains = get_all_domains()
+
+    # Build MMDD from the date (e.g. "2026-03-14" → "0314")
+    mmdd = date[5:7] + date[8:10]
+
+    async def fetch_domain_spillover(d):
+        code = d["code"]  # e.g. "P2_AFW"
+        short = code.split("_", 1)[1] if "_" in code else code  # e.g. "AFW"
+
+        try:
+            # 1) Total domain revenue on this date
+            total_data = await lp.get_sources_filtered(date, date, f"%{short}%")
+            total_totals = total_data.get("totals", {})
+            total_revenue = float(total_totals.get("totalRevenue", 0) or 0)
+            total_visitors = int(total_totals.get("visitors", 0) or 0)
+            total_leads = int(total_totals.get("totalLeads", 0) or 0)
+            total_sold = int(total_totals.get("soldLeads", 0) or 0)
+
+            # 2) Today's campaigns only (source pattern: %MMDD-SHORT%)
+            today_data = await lp.get_sources_filtered(date, date, f"%{mmdd}-{short}%")
+            today_totals = today_data.get("totals", {})
+            today_revenue = float(today_totals.get("totalRevenue", 0) or 0)
+            today_visitors = int(today_totals.get("visitors", 0) or 0)
+            today_leads = int(today_totals.get("totalLeads", 0) or 0)
+            today_sold = int(today_totals.get("soldLeads", 0) or 0)
+
+            return {
+                "code": code,
+                "name": d["name"],
+                "total_revenue": round(total_revenue, 2),
+                "total_visitors": total_visitors,
+                "total_leads": total_leads,
+                "total_sold": total_sold,
+                "today_revenue": round(today_revenue, 2),
+                "today_visitors": today_visitors,
+                "today_leads": today_leads,
+                "today_sold": today_sold,
+                "spillover_revenue": round(total_revenue - today_revenue, 2),
+                "spillover_visitors": total_visitors - today_visitors,
+                "spillover_leads": total_leads - today_leads,
+                "spillover_sold": total_sold - today_sold,
+            }
+        except Exception as e:
+            logger.warning("Spillover fetch failed for %s: %s", code, e)
+            return {
+                "code": code,
+                "name": d["name"],
+                "error": str(e),
+                "total_revenue": 0,
+                "today_revenue": 0,
+                "spillover_revenue": 0,
+                "spillover_visitors": 0,
+                "spillover_leads": 0,
+                "spillover_sold": 0,
+            }
+
+    results = await asyncio.gather(*[fetch_domain_spillover(d) for d in domains])
+
+    return {"success": True, "date": date, "domains": list(results)}
 
 
 # ──────────────────────────────────────────────────────────────────────

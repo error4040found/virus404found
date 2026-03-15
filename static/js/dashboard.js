@@ -12,6 +12,7 @@ let allDomains      = [];
 let domainPage      = 1;
 let domainsPerPage  = 3;
 let domainSearchTerm = '';
+let spilloverData    = {};  // keyed by domain code
 
 // ─── Bootstrap ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -105,6 +106,11 @@ async function loadCampaigns() {
 
         displayCampaigns(data.domains);
         updateLastSync();
+
+        // Fetch spillover data (live from Leadpier, only for today view)
+        if (currentView === 'today' && currentReport === 'campaigns') {
+            loadSpillover();
+        }
     } catch (err) {
         showError(err.message);
     } finally {
@@ -147,6 +153,51 @@ async function syncCampaigns() {
     }
 }
 
+// ─── Spillover: live Leadpier fetch ──────────────────────────────
+async function loadSpillover() {
+    try {
+        const today = new Date().toISOString().slice(0, 10);
+        const res = await fetch(`/api/spillover?date=${today}`);
+        const data = await res.json();
+        if (!data.success) return;
+
+        spilloverData = {};
+        (data.domains || []).forEach(d => { spilloverData[d.code] = d; });
+
+        // Re-render the current page to inject spillover rows
+        renderDomainPage();
+        // Update grand totals spillover
+        renderGrandSpillover();
+    } catch (e) { /* spillover is best-effort, don't block UI */ }
+}
+
+function renderGrandSpillover() {
+    let totalSpillRev = 0, totalSpillVisitors = 0, totalSpillLeads = 0, totalSpillSold = 0;
+    let totalAllRev = 0;
+    for (const code in spilloverData) {
+        const s = spilloverData[code];
+        totalSpillRev += s.spillover_revenue || 0;
+        totalSpillVisitors += s.spillover_visitors || 0;
+        totalSpillLeads += s.spillover_leads || 0;
+        totalSpillSold += s.spillover_sold || 0;
+        totalAllRev += s.total_revenue || 0;
+    }
+    const hasData = Object.keys(spilloverData).length > 0;
+    const spillCard = document.getElementById('spillover-card');
+    const liveCard  = document.getElementById('live-rev-card');
+    if (spillCard) spillCard.style.display = hasData ? '' : 'none';
+    if (liveCard)  liveCard.style.display  = hasData ? '' : 'none';
+
+    const spillEl = el('total-spillover');
+    if (spillEl) {
+        spillEl.textContent = `$${money(totalSpillRev)}`;
+    }
+    const totalRevLive = el('total-revenue-live');
+    if (totalRevLive) {
+        totalRevLive.textContent = `$${money(totalAllRev)}`;
+    }
+}
+
 // ─── Render domains + campaigns ──────────────────────────────────
 function displayCampaigns(domains) {
     const container = document.getElementById('campaigns-container');
@@ -157,6 +208,7 @@ function displayCampaigns(domains) {
         noData.style.display = 'flex';
         document.getElementById('grand-totals').style.display = 'none';
         document.getElementById('domain-pagination').style.display = 'none';
+        spilloverData = {};
         return;
     }
     noData.style.display = 'none';
@@ -196,7 +248,24 @@ function renderDomainPage() {
     const startIdx = (domainPage - 1) * domainsPerPage;
     const pageItems = filtered.slice(startIdx, startIdx + domainsPerPage);
 
-    container.innerHTML = pageItems.map(d => `
+    container.innerHTML = pageItems.map(d => {
+        const sp = spilloverData[d.code];
+        const hasSpill = sp && (sp.spillover_revenue !== 0 || sp.total_revenue !== 0);
+        const spilloverHtml = hasSpill ? `
+            <div class="spillover-bar">
+                <div class="spillover-title">📊 Spillover (prev. campaigns revenue today)</div>
+                <div class="spillover-stats">
+                    <span class="spill-stat"><strong>Total Rev</strong> $${money(sp.total_revenue)}</span>
+                    <span class="spill-stat"><strong>Today's Campaigns</strong> $${money(sp.today_revenue)}</span>
+                    <span class="spill-stat spill-highlight"><strong>Spillover Rev</strong> $${money(sp.spillover_revenue)}</span>
+                    <span class="spill-stat"><strong>Spill Visitors</strong> ${fmt(sp.spillover_visitors)}</span>
+                    <span class="spill-stat"><strong>Spill Leads</strong> ${fmt(sp.spillover_leads)}</span>
+                    <span class="spill-stat"><strong>Spill Sales</strong> ${fmt(sp.spillover_sold)}</span>
+                </div>
+            </div>` : (currentView === 'today' && currentReport === 'campaigns' && !Object.keys(spilloverData).length ?
+            `<div class="spillover-bar spillover-loading"><span class="spillover-spinner"></span> Loading spillover data…</div>` : '');
+
+        return `
         <div class="domain-card">
             <div class="domain-header" onclick="this.parentElement.classList.toggle('collapsed')">
                 <div class="domain-title">
@@ -261,8 +330,9 @@ function renderDomainPage() {
                     </tbody>
                 </table>
             </div>
+            ${spilloverHtml}
         </div>
-    `).join('');
+    `}).join('');
 
     // Render pagination controls
     renderPagination(filtered.length, totalPages);
