@@ -780,6 +780,7 @@ def get_daily_aggregated_stats(
             query = query.filter(Campaign.is_seed == 1)
         elif seed_only is False:
             query = query.filter((Campaign.is_seed == 0) | (Campaign.is_seed.is_(None)))
+            query = query.filter((Campaign.is_test == 0) | (Campaign.is_test.is_(None)))
         query = query.group_by(Campaign.date).order_by(Campaign.date)
 
         rows = query.all()

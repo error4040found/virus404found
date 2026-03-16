@@ -436,33 +436,25 @@ async def api_analytics(
     # Daily aggregation (filtered by domain if specified)
     daily_rows = get_daily_aggregated_stats(startDate, endDate, domain_code=domain)
 
-    # Build per-date campaign name sets when domain is filtered (for accurate Leadpier matching)
-    domain_camp_names_by_date = None
+    # Build per-date campaign name sets for accurate Leadpier matching
+    all_campaigns = get_campaigns_by_date_range(startDate, endDate)
     if domain:
-        all_campaigns = get_campaigns_by_date_range(startDate, endDate)
-        domain_campaigns = [r for r in all_campaigns if r["domain_code"] == domain]
-        domain_camp_names_by_date = {}
-        for r in domain_campaigns:
-            domain_camp_names_by_date.setdefault(r["date"], set()).add(
-                r["campaign_name"]
-            )
+        filtered_campaigns = [r for r in all_campaigns if r["domain_code"] == domain]
+    else:
+        filtered_campaigns = all_campaigns
+    camp_names_by_date = {}
+    for r in filtered_campaigns:
+        camp_names_by_date.setdefault(r["date"], set()).add(r["campaign_name"])
 
     # Load Leadpier revenue per date and merge into daily rows
     for row in daily_rows:
         lp_sources = get_leadpier_sources_by_date(row["date"])
-
-        if domain and domain_camp_names_by_date is not None:
-            camp_names = list(domain_camp_names_by_date.get(row["date"], set()))
-            rev_map = LeadpierAPI.match_all_campaigns(lp_sources, camp_names)
-            revenue = sum(r["revenue"] for r in rev_map.values())
-            visitors = sum(r["visitors"] for r in rev_map.values())
-            total_leads = sum(r["leads"] for r in rev_map.values())
-            conversions = sum(r["sold_leads"] for r in rev_map.values())
-        else:
-            revenue = sum(float(s.get("totalRevenue", 0) or 0) for s in lp_sources)
-            visitors = sum(int(s.get("visitors", 0) or 0) for s in lp_sources)
-            total_leads = sum(int(s.get("totalLeads", 0) or 0) for s in lp_sources)
-            conversions = sum(int(s.get("soldLeads", 0) or 0) for s in lp_sources)
+        camp_names = list(camp_names_by_date.get(row["date"], set()))
+        rev_map = LeadpierAPI.match_all_campaigns(lp_sources, camp_names)
+        revenue = sum(r["revenue"] for r in rev_map.values())
+        visitors = sum(r["visitors"] for r in rev_map.values())
+        total_leads = sum(r["leads"] for r in rev_map.values())
+        conversions = sum(r["sold_leads"] for r in rev_map.values())
 
         sends = row["sends"]
         clicks = row["clicks"]
