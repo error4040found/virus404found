@@ -66,6 +66,9 @@ def _group_campaigns(
 ) -> list[dict]:
     """Group flat campaign rows by domain, compute totals, and merge revenue."""
     domains: dict[str, dict] = {}
+    # Track which campaign names already had revenue assigned to prevent
+    # double-counting when the same name appears in multiple rows.
+    revenue_assigned: set[str] = set()
 
     for row in rows:
         code = row["domain_code"]
@@ -92,8 +95,12 @@ def _group_campaigns(
         clicks = int(row.get("clicks") or 0)
         campaign_name = row["campaign_name"]
 
-        # Revenue from Leadpier match
-        rev_data = (revenue_map or {}).get(campaign_name)
+        # Revenue from Leadpier match — only assign once per unique campaign name
+        if campaign_name not in revenue_assigned:
+            rev_data = (revenue_map or {}).get(campaign_name)
+            revenue_assigned.add(campaign_name)
+        else:
+            rev_data = None
         revenue = rev_data["revenue"] if rev_data else 0.0
         conversions = rev_data["sold_leads"] if rev_data else 0
         visitors = rev_data["visitors"] if rev_data else 0

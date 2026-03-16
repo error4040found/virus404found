@@ -431,46 +431,46 @@ async def api_analytics(
     """Return aggregated analytics data for charts: daily breakdown, domain breakdown, totals.
     Optional `domain` param filters by domain code (e.g. P2_LBE). Omit for all domains.
     """
-    from leadpier_api import LeadpierAPI
-
     # Daily aggregation (filtered by domain if specified)
     daily_rows = get_daily_aggregated_stats(startDate, endDate, domain_code=domain)
 
-    # Build per-date campaign name sets for accurate Leadpier matching
-    all_campaigns = get_campaigns_by_date_range(startDate, endDate)
+    # Domain breakdown — single source of truth for revenue data
+    domain_groups = get_campaigns_grouped(startDate, endDate)
     if domain:
-        filtered_campaigns = [r for r in all_campaigns if r["domain_code"] == domain]
-    else:
-        filtered_campaigns = all_campaigns
-    camp_names_by_date = {}
-    for r in filtered_campaigns:
-        camp_names_by_date.setdefault(r["date"], set()).add(r["campaign_name"])
+        domain_groups = [dg for dg in domain_groups if dg["code"] == domain]
 
-    # Load Leadpier revenue per date and merge into daily rows
+    # Derive per-date revenue from domain groups (ensures daily matches totals exactly)
+    daily_revenue = {}
+    for dg in domain_groups:
+        for camp in dg["campaigns"]:
+            d = camp["date"]
+            if d not in daily_revenue:
+                daily_revenue[d] = {
+                    "revenue": 0.0,
+                    "visitors": 0,
+                    "total_leads": 0,
+                    "conversions": 0,
+                }
+            daily_revenue[d]["revenue"] += camp["revenue"]
+            daily_revenue[d]["visitors"] += camp["visitors"]
+            daily_revenue[d]["total_leads"] += camp["total_leads"]
+            daily_revenue[d]["conversions"] += camp["conversions"]
+
     for row in daily_rows:
-        lp_sources = get_leadpier_sources_by_date(row["date"])
-        camp_names = list(camp_names_by_date.get(row["date"], set()))
-        rev_map = LeadpierAPI.match_all_campaigns(lp_sources, camp_names)
-        revenue = sum(r["revenue"] for r in rev_map.values())
-        visitors = sum(r["visitors"] for r in rev_map.values())
-        total_leads = sum(r["leads"] for r in rev_map.values())
-        conversions = sum(r["sold_leads"] for r in rev_map.values())
-
+        rev = daily_revenue.get(row["date"], {})
+        revenue = round(rev.get("revenue", 0.0), 2)
         sends = row["sends"]
         clicks = row["clicks"]
-        row["revenue"] = round(revenue, 2)
-        row["visitors"] = visitors
-        row["total_leads"] = total_leads
-        row["conversions"] = conversions
+        row["revenue"] = revenue
+        row["visitors"] = rev.get("visitors", 0)
+        row["total_leads"] = rev.get("total_leads", 0)
+        row["conversions"] = rev.get("conversions", 0)
         row["ecpm"] = (
             round((revenue / sends) * 1000, 2) if sends > 0 and revenue > 0 else 0
         )
         row["epc"] = round(revenue / clicks, 2) if clicks > 0 and revenue > 0 else 0
 
-    # Domain breakdown — reuse existing grouped data
-    domain_groups = get_campaigns_grouped(startDate, endDate)
-    if domain:
-        domain_groups = [dg for dg in domain_groups if dg["code"] == domain]
+    # Build domain summary from domain groups
     domain_summary = []
     for dg in domain_groups:
         t = dg["totals"]

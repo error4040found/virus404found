@@ -31,19 +31,37 @@ from config import (
 
 logger = logging.getLogger("leadpier_api")
 
-# ─── Domain short-code mapping (same as PHP) ────────────────────
-DOMAIN_SHORT_CODES = {
-    "lbe": "LoanBoostExpress",
-    "sle": "SecureLoanEdge",
-    "rct": "RapidCashTrack",
-    "pfe": "PrimeFundExpress",
-    "afw": "AdvanceFundWav",
-    "str": "StarterLoan",
-    "lv": "LoanVista",
-    "ivr": "InvestorReach",
-    "fz": "FundZone",
-    "fns": "FinanceSource",
-}
+# ─── Core-name extraction for improved matching ─────────────────
+_CORE_RE = re.compile(r"(?<!\d)(\d{4}-.+)$")
+_PREFIX_ROOT_RE = re.compile(r"^([a-z]+)")
+
+
+def _extract_core(name: str) -> str | None:
+    """Extract the date-code core (e.g. '0316-afw-e2') from a source or campaign name."""
+    m = _CORE_RE.search(name.lower())
+    return m.group(1) if m else None
+
+
+def _extract_prefix_root(name: str) -> str:
+    """Extract the leading alphabetic prefix root (e.g. 'mta' from 'mta-b_0316-afw-e2')."""
+    m = _PREFIX_ROOT_RE.match(name.lower())
+    return m.group(1) if m else ""
+
+
+def _platform_compatible(campaign_lower: str, source_lower: str) -> bool:
+    """Check whether campaign and source share the same platform prefix root.
+
+    Dynamically compares the leading alphabetic segment of each name.
+    e.g. mta_… ↔ mta-b_… both have root 'mta' → compatible.
+         mta_… ↔ spg_…  roots differ → incompatible.
+    """
+    camp_root = _extract_prefix_root(campaign_lower)
+    src_root = _extract_prefix_root(source_lower)
+    if not camp_root or not src_root:
+        return False
+    # Match if roots are the same or one is a prefix of the other (min 3 chars)
+    shorter, longer = sorted((camp_root, src_root), key=len)
+    return len(shorter) >= 3 and longer.startswith(shorter)
 
 
 class LeadpierAPI:
@@ -139,7 +157,7 @@ class LeadpierAPI:
         period_to: str,
     ) -> list[dict[str, Any]]:
         """
-        Fetch source-level revenue data from Leadpier.
+        Fetch source-level revenue data from Leadpier (with pagination).
 
         Returns list of dicts with keys:
           source, visitors, totalLeads, soldLeads, totalRevenue, EPL, EPV, ...
@@ -153,41 +171,54 @@ class LeadpierAPI:
             "origin": "https://dash.leadpier.com",
             "referer": "https://dash.leadpier.com/",
         }
-        payload = {
-            "limit": 1000,
-            "offset": 0,
-            "orderBy": "totalRevenue",
-            "orderDirection": "DESC",
-            "periodFrom": period_from,
-            "periodTo": period_to,
-        }
+
+        all_stats: list[dict] = []
+        offset = 0
+        limit = 1000
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(
-                LEADPIER_DATA_URL,
-                json=payload,
-                headers=headers,
-            )
+            while True:
+                payload = {
+                    "limit": limit,
+                    "offset": offset,
+                    "orderBy": "totalRevenue",
+                    "orderDirection": "DESC",
+                    "periodFrom": period_from,
+                    "periodTo": period_to,
+                }
 
-            # Token may have expired server-side
-            if resp.status_code in (401, 403):
-                logger.warning("Leadpier token rejected, re-authenticating...")
-                token = await self._authenticate()
-                headers["authorization"] = f"bearer {token}"
                 resp = await client.post(
                     LEADPIER_DATA_URL,
                     json=payload,
                     headers=headers,
                 )
 
-            resp.raise_for_status()
-            data = resp.json()
+                # Token may have expired server-side
+                if resp.status_code in (401, 403):
+                    logger.warning("Leadpier token rejected, re-authenticating...")
+                    token = await self._authenticate()
+                    headers["authorization"] = f"bearer {token}"
+                    resp = await client.post(
+                        LEADPIER_DATA_URL,
+                        json=payload,
+                        headers=headers,
+                    )
 
-        stats = data.get("data", {}).get("statistics", [])
+                resp.raise_for_status()
+                data = resp.json()
+
+                page_stats = data.get("data", {}).get("statistics", [])
+                all_stats.extend(page_stats)
+
+                total_count = int(data.get("data", {}).get("count", 0) or 0)
+                if len(all_stats) >= total_count or len(page_stats) < limit:
+                    break
+                offset += limit
+
         logger.info(
-            "Leadpier: %d sources for %s → %s", len(stats), period_from, period_to
+            "Leadpier: %d sources for %s → %s", len(all_stats), period_from, period_to
         )
-        return stats
+        return all_stats
 
     async def get_sources_filtered(
         self,
@@ -263,10 +294,13 @@ class LeadpierAPI:
           2. Underscore suffix: source ends with _campaign_name
           3. Source-prefix:  source matches ^source\\d+[-_]campaign_name$
           4. Dash-contains:  source contains -campaign_name
+          5. Core-name:  extract MMDD-domain-segment core from both,
+                         match only if platform prefixes are compatible
 
         Multiple sources can match → metrics are SUMMED.
         """
         cn_lower = campaign_name.lower()
+        cn_core = _extract_core(cn_lower)
         total_revenue = 0.0
         total_visitors = 0
         total_leads = 0
@@ -284,6 +318,12 @@ class LeadpierAPI:
                 or bool(re.match(r"^source\d+[-_]" + re.escape(cn_lower) + r"$", sn))
                 or f"-{cn_lower}" in sn
             )
+
+            # Rule 5: core-name matching with platform awareness
+            if not hit and cn_core and cn_core != cn_lower:
+                sn_core = _extract_core(sn)
+                if sn_core == cn_core and _platform_compatible(cn_lower, sn):
+                    hit = True
 
             if hit:
                 matched = True
@@ -310,9 +350,10 @@ class LeadpierAPI:
         """
         Match a list of campaign names against Leadpier sources.
         Returns {campaign_name: {revenue, visitors, leads, sold_leads}} for matches.
+        Deduplicates campaign names to avoid redundant matching work.
         """
         result: dict[str, dict] = {}
-        for cn in campaign_names:
+        for cn in dict.fromkeys(campaign_names):  # deduplicate, preserve order
             m = LeadpierAPI.match_source_to_campaign(sources, cn)
             if m:
                 result[cn] = m
