@@ -130,8 +130,10 @@ async function loadCampaigns() {
         updateLastSync();
 
         // Fetch spillover data (live from Leadpier, for today and yesterday views)
+        // Use the date returned by the server (EST) to avoid browser-UTC mismatch
         if ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns') {
-            loadSpillover();
+            const spillDate = data.date || data.startDate;
+            loadSpillover(spillDate);
         }
     } catch (err) {
         showError(err.message);
@@ -176,14 +178,16 @@ async function syncCampaigns() {
 }
 
 // ─── Spillover: live Leadpier fetch ──────────────────────────────
-async function loadSpillover() {
+async function loadSpillover(dateStr) {
     try {
-        let dateStr;
-        if (currentView === 'yesterday') {
-            const yd = new Date(); yd.setDate(yd.getDate() - 1);
-            dateStr = yd.toISOString().slice(0, 10);
-        } else {
-            dateStr = new Date().toISOString().slice(0, 10);
+        if (!dateStr) {
+            // Fallback: compute from browser (should not happen with server date)
+            if (currentView === 'yesterday') {
+                const yd = new Date(); yd.setDate(yd.getDate() - 1);
+                dateStr = yd.toISOString().slice(0, 10);
+            } else {
+                dateStr = new Date().toISOString().slice(0, 10);
+            }
         }
         const res = await fetch(`/api/spillover?date=${dateStr}`);
         const data = await res.json();
@@ -202,13 +206,15 @@ async function loadSpillover() {
 function renderGrandSpillover() {
     let totalSpillRev = 0, totalSpillVisitors = 0, totalSpillLeads = 0, totalSpillSold = 0;
     let totalAllRev = 0;
+    let totalExlSpillRev = 0;
     for (const code in spilloverData) {
         const s = spilloverData[code];
         totalSpillRev += s.spillover_revenue || 0;
         totalSpillVisitors += s.spillover_visitors || 0;
         totalSpillLeads += s.spillover_leads || 0;
         totalSpillSold += s.spillover_sold || 0;
-        totalAllRev += s.total_revenue || 0;
+        totalAllRev += (s.total_revenue || 0) + (s.exl_total_revenue || 0);
+        totalExlSpillRev += s.exl_spillover_revenue || 0;
     }
     const hasData = Object.keys(spilloverData).length > 0;
     const spillCard = document.getElementById('spillover-card');
@@ -218,7 +224,7 @@ function renderGrandSpillover() {
 
     const spillEl = el('total-spillover');
     if (spillEl) {
-        spillEl.textContent = `$${money(totalSpillRev)}`;
+        spillEl.textContent = `$${money(totalSpillRev + totalExlSpillRev)}`;
     }
     const totalRevLive = el('total-revenue-live');
     if (totalRevLive) {
@@ -278,18 +284,24 @@ function renderDomainPage() {
 
     container.innerHTML = pageItems.map(d => {
         const sp = spilloverData[d.code];
-        const hasSpill = sp && (sp.spillover_revenue !== 0 || sp.total_revenue !== 0);
+        const hasSpill = sp && (sp.spillover_revenue !== 0 || sp.total_revenue !== 0 || (sp.exl_total_revenue || 0) !== 0 || (sp.exl_spillover_revenue || 0) !== 0);
         const spilloverHtml = hasSpill ? `
             <div class="spillover-bar">
                 <div class="spillover-title">📊 Spillover (prev. campaigns revenue today)</div>
                 <div class="spillover-stats">
-                    <span class="spill-stat"><strong>Total Rev</strong> $${money(sp.total_revenue)}</span>
-                    <span class="spill-stat"><strong>Today's Campaigns</strong> $${money(sp.today_revenue)}</span>
-                    <span class="spill-stat spill-highlight"><strong>Spillover Rev</strong> $${money(sp.spillover_revenue)}</span>
+                    <span class="spill-stat"><strong>LE Total Rev</strong> $${money(sp.total_revenue)}</span>
+                    <span class="spill-stat"><strong>LE Today's</strong> $${money(sp.today_revenue)}</span>
+                    <span class="spill-stat spill-highlight"><strong>LE Spillover</strong> $${money(sp.spillover_revenue)}</span>
                     <span class="spill-stat"><strong>Spill Visitors</strong> ${fmt(sp.spillover_visitors)}</span>
                     <span class="spill-stat"><strong>Spill Leads</strong> ${fmt(sp.spillover_leads)}</span>
                     <span class="spill-stat"><strong>Spill Sales</strong> ${fmt(sp.spillover_sold)}</span>
                 </div>
+                ${(sp.exl_total_revenue || 0) > 0 || (sp.exl_spillover_revenue || 0) !== 0 ? `
+                <div class="spillover-stats" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06);">
+                    <span class="spill-stat"><strong>EXL Total Rev</strong> $${money(sp.exl_total_revenue || 0)}</span>
+                    <span class="spill-stat"><strong>EXL Today's</strong> $${money(sp.exl_today_revenue || 0)}</span>
+                    <span class="spill-stat spill-highlight"><strong>EXL Spillover</strong> $${money(sp.exl_spillover_revenue || 0)}</span>
+                </div>` : ''}
             </div>` : ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns' && !Object.keys(spilloverData).length ?
             `<div class="spillover-bar spillover-loading"><span class="spillover-spinner"></span> Loading spillover data…</div>` : '');
 
@@ -310,7 +322,9 @@ function renderDomainPage() {
                     <span class="domain-stat visitors-stat"><strong>VISITORS</strong> ${fmt(d.totals.visitors)}</span>
                     <span class="domain-stat leads-stat"><strong>T.LEADS</strong> ${fmt(d.totals.total_leads)}</span>
                     <span class="domain-stat conv-stat"><strong>S.LEADS</strong> ${fmt(d.totals.conversions)}</span>
-                    <span class="domain-stat revenue-stat"><strong>REV</strong> $${money(d.totals.revenue)}</span>
+                    <span class="domain-stat revenue-stat"><strong>LE REV</strong> $${money(d.totals.revenue)}</span>
+                    <span class="domain-stat exl-revenue-stat"><strong>EXL REV</strong> $${money(d.totals.exl_revenue || 0)}</span>
+                    <span class="domain-stat combined-revenue-stat"><strong>COMB REV</strong> $${money(d.totals.combined_revenue || 0)}</span>
                     <span class="domain-stat epc-stat"><strong>EPC</strong> $${money(d.totals.epc)}</span>
                     <span class="domain-stat ecpm-stat"><strong>eCPM</strong> $${money(d.totals.ecpm)}</span>
                 </div>
@@ -331,7 +345,9 @@ function renderDomainPage() {
                             <th class="col-num-sm">Visitors</th>
                             <th class="col-num-sm">T.Leads</th>
                             <th class="col-num-sm">S.Leads</th>
-                            <th class="col-money">Revenue</th>
+                            <th class="col-money">LE Rev</th>
+                            <th class="col-money">EXL Rev</th>
+                            <th class="col-money">Comb Rev</th>
                             <th class="col-money">EPC</th>
                             <th class="col-money">eCPM</th>
                         </tr>
@@ -352,6 +368,8 @@ function renderDomainPage() {
                             <td class="col-num-sm leads-val">${c.total_leads > 0 ? fmt(c.total_leads) : '-'}</td>
                             <td class="col-num-sm conv-val">${c.conversions > 0 ? fmt(c.conversions) : '-'}</td>
                             <td class="col-money revenue-val">${c.revenue > 0 ? '$'+money(c.revenue) : '-'}</td>
+                            <td class="col-money exl-revenue-val">${(c.exl_revenue || 0) > 0 ? '$'+money(c.exl_revenue) : '-'}</td>
+                            <td class="col-money combined-revenue-val">${(c.combined_revenue || 0) > 0 ? '$'+money(c.combined_revenue) : '-'}</td>
                             <td class="col-money epc-val">${c.epc > 0 ? '$'+money(c.epc) : '-'}</td>
                             <td class="col-money ecpm-val">${c.ecpm > 0 ? '$'+money(c.ecpm) : '-'}</td>
                         </tr>`).join('')}
@@ -408,16 +426,18 @@ function renderGrandTotals(domains) {
         a.bounces += d.totals.bounces;
         a.unsubs  += d.totals.unsubs;
         a.revenue += d.totals.revenue || 0;
+        a.exl_revenue += d.totals.exl_revenue || 0;
+        a.combined_revenue += d.totals.combined_revenue || 0;
         a.conversions += d.totals.conversions || 0;
         a.visitors += d.totals.visitors || 0;
         a.total_leads += d.totals.total_leads || 0;
         return a;
-    }, { sends:0, opens:0, clicks:0, bounces:0, unsubs:0, revenue:0, conversions:0, visitors:0, total_leads:0 });
+    }, { sends:0, opens:0, clicks:0, bounces:0, unsubs:0, revenue:0, exl_revenue:0, combined_revenue:0, conversions:0, visitors:0, total_leads:0 });
 
     const oPct = t.sends > 0 ? ((t.opens / t.sends) * 100).toFixed(2) : '0.00';
     const cPct = t.sends > 0 ? ((t.clicks/ t.sends) * 100).toFixed(2) : '0.00';
-    const epc  = t.clicks > 0 ? (t.revenue / t.clicks).toFixed(2) : '0.00';
-    const ecpm = t.sends > 0 ? ((t.revenue / t.sends) * 1000).toFixed(2) : '0.00';
+    const epc  = t.clicks > 0 ? (t.combined_revenue / t.clicks).toFixed(2) : '0.00';
+    const ecpm = t.sends > 0 ? ((t.combined_revenue / t.sends) * 1000).toFixed(2) : '0.00';
 
     el('total-sends').textContent      = fmt(t.sends);
     el('total-opens').textContent      = `${fmt(t.opens)} opens`;
@@ -438,6 +458,8 @@ function renderGrandTotals(domains) {
     el('total-total-leads').textContent = fmt(t.total_leads);
     el('total-sold-leads').textContent  = fmt(t.conversions);
     el('total-revenue').textContent     = `$${money(t.revenue)}`;
+    el('total-exl-revenue').textContent = `$${money(t.exl_revenue)}`;
+    el('total-combined-revenue').textContent = `$${money(t.combined_revenue)}`;
     el('total-epc').textContent        = `$${epc}`;
     el('total-ecpm').textContent       = `$${ecpm}`;
 

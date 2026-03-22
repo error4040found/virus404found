@@ -116,6 +116,21 @@ function bindEvents() {
     document.getElementById('load-btn').addEventListener('click', loadAnalytics);
     document.getElementById('sync-btn').addEventListener('click', syncAndLoad);
     document.getElementById('domain-select').addEventListener('change', loadAnalytics);
+    document.getElementById('rev-type-select').addEventListener('change', () => {
+        if (analyticsData) {
+            renderKPIs(analyticsData.totals);
+            renderAllCharts(analyticsData);
+            updateBreakdownVisibility();
+        }
+    });
+
+    // Collapse-toggle for breakdown sections
+    document.querySelectorAll('.collapse-toggle').forEach(header => {
+        header.addEventListener('click', () => {
+            const section = document.getElementById(header.dataset.target);
+            if (section) section.classList.toggle('open');
+        });
+    });
 
     document.querySelectorAll('.range-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -162,9 +177,10 @@ async function loadAnalytics() {
         renderKPIs(data.totals);
         renderAllCharts(data);
 
-        document.getElementById('kpi-bar').style.display      = 'grid';
-        document.getElementById('revenue-bar').style.display   = 'grid';
-        document.getElementById('charts-section').style.display = 'block';
+        document.getElementById('kpi-bar').style.display          = 'grid';
+        document.getElementById('revenue-bar').style.display       = 'grid';
+        document.getElementById('charts-section').style.display     = 'block';
+        renderRevenueBreakdown();
     } catch (err) {
         showError(err.message);
     } finally {
@@ -200,8 +216,14 @@ async function syncAndLoad() {
 }
 
 // ─── Render KPIs ─────────────────────────────────────────────────
+function getRevType() {
+    return document.getElementById('rev-type-select').value || 'combined';
+}
+
 function renderKPIs(t) {
     if (!t) return;
+    const rv = getRevType();
+
     el('kpi-sends').textContent     = fmt(t.sends);
     el('kpi-opens').textContent     = fmt(t.opens);
     el('kpi-open-rate').textContent = t.open_pct.toFixed(2) + '%';
@@ -209,14 +231,42 @@ function renderKPIs(t) {
     el('kpi-clicks').textContent    = fmt(t.clicks);
     el('kpi-unsubs').textContent    = fmt(t.unsubs);
 
-    // Revenue KPIs
-    el('rev-le').textContent       = '$' + money(t.revenue);
-    el('rev-le-sales').textContent = fmt(t.conversions) + ' sales';
-    el('rev-total').textContent    = '$' + money(t.revenue);
-    el('rev-sales').textContent    = fmt(t.conversions);
-    el('rev-ecpm').textContent     = '$' + money(t.ecpm);
-    el('rev-epc').textContent      = '$' + money(t.epc);
-    el('rev-visitors').textContent = fmt(t.visitors);
+    // Revenue KPIs — driven by selected rev type
+    let rev, sales, label, icon;
+    if (rv === 'le') {
+        rev = t.revenue; sales = t.conversions; label = 'LE Revenue'; icon = '💰';
+    } else if (rv === 'exl') {
+        rev = t.exl_revenue || 0; sales = t.exl_sales || 0; label = 'EXL Revenue'; icon = '📊';
+    } else {
+        rev = t.combined_revenue || t.revenue; sales = (t.conversions || 0) + (t.exl_sales || 0); label = 'Combined Revenue'; icon = '💎';
+    }
+    const ecpm = t.sends > 0 ? (rev / t.sends) * 1000 : 0;
+    const epc  = t.clicks > 0 ? rev / t.clicks : 0;
+
+    el('rev-icon-main').textContent  = icon;
+    el('rev-label-main').textContent = label;
+    el('rev-main').textContent       = '$' + money(rev);
+    el('rev-main-sales').textContent = fmt(sales) + ' sales';
+    el('rev-sales').textContent      = fmt(sales);
+    el('rev-sales-sub').textContent  = rv === 'combined' ? 'LE + EXL sales' : rv.toUpperCase() + ' sales';
+    el('rev-ecpm').textContent       = '$' + money(ecpm);
+    el('rev-epc').textContent        = '$' + money(epc);
+    el('rev-visitors').textContent   = fmt(t.visitors);
+
+    // LE & EXL breakdown cards — visible only in Combined mode
+    const leCard  = el('rev-le-card');
+    const exlCard = el('rev-exl-card');
+    if (rv === 'combined') {
+        leCard.style.display  = '';
+        exlCard.style.display = '';
+        el('rev-le').textContent       = '$' + money(t.revenue);
+        el('rev-le-sales').textContent = fmt(t.conversions) + ' sales';
+        el('rev-exl').textContent      = '$' + money(t.exl_revenue || 0);
+        el('rev-exl-sales').textContent = fmt(t.exl_sales || 0) + ' sales';
+    } else {
+        leCard.style.display  = 'none';
+        exlCard.style.display = 'none';
+    }
 }
 
 // ─── Master Render ───────────────────────────────────────────────
@@ -346,46 +396,35 @@ function renderRatesChart(labels, daily) {
 }
 
 function renderRevenueChart(labels, daily) {
+    const rv = getRevType();
+    let datasets;
+    if (rv === 'le') {
+        datasets = [
+            { label: 'LE Revenue', data: daily.map(d => d.revenue), backgroundColor: C.purpleBg, borderColor: C.purple, borderWidth: 1, borderRadius: 6, borderSkipped: false, yAxisID: 'y' },
+            { label: 'eCPM $', data: daily.map(d => d.sends > 0 ? (d.revenue / d.sends) * 1000 : 0), type: 'line', borderColor: C.cyan, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: C.cyan, tension: 0.3, yAxisID: 'y1' },
+        ];
+    } else if (rv === 'exl') {
+        datasets = [
+            { label: 'EXL Revenue', data: daily.map(d => d.exl_revenue || 0), backgroundColor: C.orangeBg, borderColor: C.orange, borderWidth: 1, borderRadius: 6, borderSkipped: false, yAxisID: 'y' },
+            { label: 'eCPM $', data: daily.map(d => d.sends > 0 ? ((d.exl_revenue || 0) / d.sends) * 1000 : 0), type: 'line', borderColor: C.cyan, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: C.cyan, tension: 0.3, yAxisID: 'y1' },
+        ];
+    } else {
+        datasets = [
+            { label: 'LE Revenue', data: daily.map(d => d.revenue), backgroundColor: C.purpleBg, borderColor: C.purple, borderWidth: 1, borderRadius: 6, borderSkipped: false, yAxisID: 'y' },
+            { label: 'EXL Revenue', data: daily.map(d => d.exl_revenue || 0), backgroundColor: C.orangeBg, borderColor: C.orange, borderWidth: 1, borderRadius: 6, borderSkipped: false, yAxisID: 'y' },
+            { label: 'eCPM $', data: daily.map(d => d.ecpm), type: 'line', borderColor: C.cyan, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: C.cyan, tension: 0.3, yAxisID: 'y1' },
+        ];
+    }
     makeChart('chart-revenue', {
         type: 'bar',
-        data: {
-            labels,
-            datasets: [
-                {
-                    label: 'LE Revenue',
-                    data: daily.map(d => d.revenue),
-                    backgroundColor: C.purpleBg,
-                    borderColor: C.purple,
-                    borderWidth: 1,
-                    borderRadius: 6,
-                    borderSkipped: false,
-                    yAxisID: 'y',
-                },
-                {
-                    label: 'eCPM $',
-                    data: daily.map(d => d.ecpm),
-                    type: 'line',
-                    borderColor: C.cyan,
-                    backgroundColor: 'transparent',
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    pointBackgroundColor: C.cyan,
-                    tension: 0.3,
-                    yAxisID: 'y1',
-                },
-            ],
-        },
+        data: { labels, datasets },
         options: {
             responsive: true, maintainAspectRatio: false,
             plugins: { legend: { position: 'top' } },
             scales: {
                 x: { grid: gridStyle },
-                y: { grid: gridStyle, position: 'left', beginAtZero: true,
-                     ticks: { callback: v => '$' + v }
-                },
-                y1: { grid: { display: false }, position: 'right', beginAtZero: true,
-                      ticks: { callback: v => '$' + v.toFixed(2) }
-                },
+                y: { grid: gridStyle, position: 'left', beginAtZero: true, ticks: { callback: v => '$' + v } },
+                y1: { grid: { display: false }, position: 'right', beginAtZero: true, ticks: { callback: v => '$' + v.toFixed(2) } },
             },
             interaction: { mode: 'index', intersect: false },
         },
@@ -473,33 +512,28 @@ function renderUnsubsBouncesChart(labels, daily) {
 }
 
 function renderSalesChart(labels, daily) {
+    const rv = getRevType();
+    let datasets;
+    if (rv === 'le') {
+        datasets = [
+            { label: 'LE Sales', data: daily.map(d => d.conversions), backgroundColor: C.purpleBg, borderColor: C.purple, borderWidth: 1, borderRadius: 6, borderSkipped: false },
+            { label: 'Visitors', data: daily.map(d => d.visitors), type: 'line', borderColor: C.cyan, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: C.cyan, tension: 0.3 },
+        ];
+    } else if (rv === 'exl') {
+        datasets = [
+            { label: 'EXL Sales', data: daily.map(d => d.exl_sales || 0), backgroundColor: C.orangeBg, borderColor: C.orange, borderWidth: 1, borderRadius: 6, borderSkipped: false },
+            { label: 'Visitors', data: daily.map(d => d.visitors), type: 'line', borderColor: C.cyan, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: C.cyan, tension: 0.3 },
+        ];
+    } else {
+        datasets = [
+            { label: 'LE Sales', data: daily.map(d => d.conversions), backgroundColor: C.purpleBg, borderColor: C.purple, borderWidth: 1, borderRadius: 6, borderSkipped: false },
+            { label: 'EXL Sales', data: daily.map(d => d.exl_sales || 0), backgroundColor: C.orangeBg, borderColor: C.orange, borderWidth: 1, borderRadius: 6, borderSkipped: false },
+            { label: 'Visitors', data: daily.map(d => d.visitors), type: 'line', borderColor: C.cyan, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: C.cyan, tension: 0.3 },
+        ];
+    }
     makeChart('chart-sales', {
         type: 'bar',
-        data: {
-            labels,
-            datasets: [
-                {
-                    label: 'LE Sales',
-                    data: daily.map(d => d.conversions),
-                    backgroundColor: C.purpleBg,
-                    borderColor: C.purple,
-                    borderWidth: 1,
-                    borderRadius: 6,
-                    borderSkipped: false,
-                },
-                {
-                    label: 'Visitors',
-                    data: daily.map(d => d.visitors),
-                    type: 'line',
-                    borderColor: C.cyan,
-                    backgroundColor: 'transparent',
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    pointBackgroundColor: C.cyan,
-                    tension: 0.3,
-                },
-            ],
-        },
+        data: { labels, datasets },
         options: {
             responsive: true, maintainAspectRatio: false,
             plugins: { legend: { position: 'top' } },
@@ -612,13 +646,19 @@ function renderCtrTrend(labels, daily) {
 }
 
 function renderEcpmTrend(labels, daily) {
+    const rv = getRevType();
+    const ecpmData = daily.map(d => {
+        if (rv === 'le') return d.sends > 0 ? (d.revenue / d.sends) * 1000 : 0;
+        if (rv === 'exl') return d.sends > 0 ? ((d.exl_revenue || 0) / d.sends) * 1000 : 0;
+        return d.ecpm;
+    });
     makeChart('chart-ecpm-trend', {
         type: 'bar',
         data: {
             labels,
             datasets: [{
                 label: 'eCPM',
-                data: daily.map(d => d.ecpm),
+                data: ecpmData,
                 backgroundColor: createGradientBar('chart-ecpm-trend', C.blue, C.blueBg),
                 borderColor: C.blue,
                 borderWidth: 1,
@@ -700,7 +740,7 @@ function renderDomainCtr(domains) {
 function renderDomainEcpm(domains) {
     const names = domains.map(d => d.name);
     const vals  = domains.map(d => d.ecpm);
-    const total = domains.reduce((a,d)=> a + d.revenue, 0);
+    const total = domains.reduce((a,d)=> a + (d.combined_revenue || d.revenue), 0);
     const totalSends = domains.reduce((a,d)=> a + d.sends, 0);
     const grandEcpm = totalSends > 0 ? (total / totalSends) * 1000 : 0;
     names.push('Grand Total');
@@ -725,28 +765,43 @@ function renderDomainEcpm(domains) {
 }
 
 function renderDomainRevenue(domains) {
+    const rv = getRevType();
     const names = domains.map(d => d.name);
-    const vals  = domains.map(d => d.revenue);
-    const total = vals.reduce((a,b) => a+b, 0);
     names.push('Grand Total');
-    vals.push(parseFloat(total.toFixed(2)));
 
-    makeChart('chart-domain-revenue', {
-        type: 'bar',
-        data: {
-            labels: names,
-            datasets: [{
-                label: 'Revenue',
-                data: vals,
-                backgroundColor: names.map((_, i) => i < names.length - 1 ? DOMAIN_BG[i % DOMAIN_BG.length] : C.tealBg),
-                borderColor: names.map((_, i) => i < names.length - 1 ? DOMAIN_COLORS[i % DOMAIN_COLORS.length] : C.teal),
-                borderWidth: 1,
-                borderRadius: 6,
-                borderSkipped: false,
-            }],
-        },
-        options: domainBarOptions('$'),
-    });
+    if (rv === 'le') {
+        const vals = domains.map(d => d.revenue);
+        vals.push(parseFloat(vals.reduce((a,b)=>a+b,0).toFixed(2)));
+        makeChart('chart-domain-revenue', {
+            type: 'bar',
+            data: { labels: names, datasets: [{ label: 'LE Revenue', data: vals, backgroundColor: C.purpleBg, borderColor: C.purple, borderWidth: 1, borderRadius: 6, borderSkipped: false }] },
+            options: domainBarOptions('$'),
+        });
+    } else if (rv === 'exl') {
+        const vals = domains.map(d => d.exl_revenue || 0);
+        vals.push(parseFloat(vals.reduce((a,b)=>a+b,0).toFixed(2)));
+        makeChart('chart-domain-revenue', {
+            type: 'bar',
+            data: { labels: names, datasets: [{ label: 'EXL Revenue', data: vals, backgroundColor: C.orangeBg, borderColor: C.orange, borderWidth: 1, borderRadius: 6, borderSkipped: false }] },
+            options: domainBarOptions('$'),
+        });
+    } else {
+        const leVals  = domains.map(d => d.revenue);
+        const exlVals = domains.map(d => d.exl_revenue || 0);
+        leVals.push(parseFloat(leVals.reduce((a,b)=>a+b,0).toFixed(2)));
+        exlVals.push(parseFloat(exlVals.reduce((a,b)=>a+b,0).toFixed(2)));
+        makeChart('chart-domain-revenue', {
+            type: 'bar',
+            data: {
+                labels: names,
+                datasets: [
+                    { label: 'LE Revenue', data: leVals, backgroundColor: C.purpleBg, borderColor: C.purple, borderWidth: 1, borderRadius: 6, borderSkipped: false },
+                    { label: 'EXL Revenue', data: exlVals, backgroundColor: C.orangeBg, borderColor: C.orange, borderWidth: 1, borderRadius: 6, borderSkipped: false },
+                ],
+            },
+            options: domainBarOptions('$'),
+        });
+    }
 }
 
 function renderDomainSends(domains) {
@@ -900,6 +955,7 @@ function showLoading(on) {
         el('charts-section').style.display = 'none';
         el('kpi-bar').style.display = 'none';
         el('revenue-bar').style.display = 'none';
+        el('revenue-breakdown').style.display = 'none';
     }
 }
 
@@ -909,6 +965,87 @@ function showError(msg) {
     e.style.display = 'flex';
 }
 function hideError() { el('error-message').style.display = 'none'; }
+
+// ─── Revenue Breakdown Tables (Collapsible) ─────────────────────
+function renderRevenueBreakdown() {
+    const domains = analyticsData.domains || [];
+    const totals  = analyticsData.totals  || {};
+
+    const colDefs = {
+        combined: [
+            { key: 'name',     label: 'Domain',       cls: 'domain-name-cell' },
+            { key: 'sends',    label: 'Sends',         cls: 'col-num', fmt: fmt },
+            { key: 'combined_revenue', label: 'Revenue', cls: 'col-num rev-val rev-comb-val', fmt: v => '$' + money(v) },
+            { key: 'conversions', label: 'LE Sales',    cls: 'col-num', fmt: fmt },
+            { key: 'exl_sales',   label: 'EXL Sales',   cls: 'col-num rev-sales-val', fmt: fmt },
+            { key: 'visitors', label: 'Visitors',      cls: 'col-num rev-visitors-val', fmt: fmt },
+            { key: 'total_leads', label: 'Leads',      cls: 'col-num rev-leads-val', fmt: fmt },
+            { key: 'ecpm',     label: 'eCPM',           cls: 'col-num rev-ecpm-val',  fmt: v => '$' + money(v) },
+            { key: 'epc',      label: 'EPC',            cls: 'col-num rev-epc-val',   fmt: v => '$' + money(v) },
+        ],
+        le: [
+            { key: 'name',     label: 'Domain',      cls: 'domain-name-cell' },
+            { key: 'sends',    label: 'Sends',        cls: 'col-num', fmt: fmt },
+            { key: 'revenue',  label: 'Revenue',      cls: 'col-num rev-val rev-le-val',  fmt: v => '$' + money(v) },
+            { key: 'conversions', label: 'Sales',      cls: 'col-num rev-sales-val', fmt: fmt },
+            { key: 'visitors', label: 'Visitors',     cls: 'col-num rev-visitors-val', fmt: fmt },
+            { key: 'total_leads', label: 'Leads',      cls: 'col-num rev-leads-val', fmt: fmt },
+            { key: 'ecpm',     label: 'eCPM',          cls: 'col-num rev-ecpm-val',  fmt: v => '$' + money(v) },
+            { key: 'epc',      label: 'EPC',           cls: 'col-num rev-epc-val',   fmt: v => '$' + money(v) },
+        ],
+        exl: [
+            { key: 'name',     label: 'Domain',       cls: 'domain-name-cell' },
+            { key: 'sends',    label: 'Sends',         cls: 'col-num', fmt: fmt },
+            { key: 'exl_revenue', label: 'Revenue',    cls: 'col-num rev-val rev-exl-val', fmt: v => '$' + money(v) },
+            { key: 'exl_sales',   label: 'Sales',      cls: 'col-num rev-sales-val', fmt: fmt },
+            { key: 'exl_clicks',  label: 'Clicks',     cls: 'col-num', fmt: fmt },
+            { key: 'visitors', label: 'Visitors',      cls: 'col-num rev-visitors-val', fmt: fmt },
+            { key: 'total_leads', label: 'Leads',      cls: 'col-num rev-leads-val', fmt: fmt },
+        ],
+    };
+
+    const subLabel = domains.length + ' domain' + (domains.length !== 1 ? 's' : '');
+
+    ['combined', 'le', 'exl'].forEach(rv => {
+        const cols  = colDefs[rv];
+        const thead = el('bd-' + rv + '-thead');
+        const tbody = el('bd-' + rv + '-tbody');
+        const tfoot = el('bd-' + rv + '-tfoot');
+        const subEl = el('bd-' + rv + '-sub');
+        subEl.textContent = subLabel;
+
+        thead.innerHTML = cols.map(c =>
+            `<th class="${c.cls || ''}">${c.label}</th>`
+        ).join('');
+
+        tbody.innerHTML = domains.map(d => {
+            return '<tr>' + cols.map(c => {
+                const val = c.key === 'name' ? (d.name || d.code) : (d[c.key] ?? 0);
+                const display = c.fmt ? c.fmt(val) : val;
+                return `<td class="${c.cls || ''}">${display}</td>`;
+            }).join('') + '</tr>';
+        }).join('');
+
+        tfoot.innerHTML = cols.map(c => {
+            if (c.key === 'name') return `<td class="${c.cls || ''}">All Domains</td>`;
+            const val = totals[c.key] ?? 0;
+            const display = c.fmt ? c.fmt(val) : val;
+            return `<td class="col-num">${display}</td>`;
+        }).join('');
+    });
+
+    el('revenue-breakdown').style.display = 'block';
+    updateBreakdownVisibility();
+}
+
+function updateBreakdownVisibility() {
+    const rv = getRevType();
+    const map = { combined: 'bd-combined', le: 'bd-le', exl: 'bd-exl' };
+    Object.entries(map).forEach(([key, id]) => {
+        const sec = document.getElementById(id);
+        if (sec) sec.style.display = key === rv ? '' : 'none';
+    });
+}
 
 function setSyncing(on) {
     const btn = el('sync-btn');

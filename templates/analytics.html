@@ -107,6 +107,14 @@
         <input type="date" id="start-date" />
         <label>To</label>
         <input type="date" id="end-date" />
+        <div class="rev-type-filter">
+          <label>Revenue</label>
+          <select id="rev-type-select">
+            <option value="combined">Combined</option>
+            <option value="le">LE Revenue</option>
+            <option value="exl">EXL Revenue</option>
+          </select>
+        </div>
         <div class="domain-filter">
           <label>Domain</label>
           <select id="domain-select">
@@ -173,7 +181,15 @@
 
     <!-- ─── Revenue KPI Cards ─── -->
     <section id="revenue-bar" class="revenue-bar" style="display: none">
-      <div class="rev-card rev-le">
+      <div class="rev-card rev-revenue">
+        <div class="rev-icon" id="rev-icon-main">💎</div>
+        <div class="rev-data">
+          <div class="rev-label" id="rev-label-main">Revenue</div>
+          <div class="rev-value" id="rev-main">$0.00</div>
+          <div class="rev-sub" id="rev-main-sales">0 sales</div>
+        </div>
+      </div>
+      <div class="rev-card rev-le" id="rev-le-card" style="display: none">
         <div class="rev-icon">💰</div>
         <div class="rev-data">
           <div class="rev-label">LE Revenue</div>
@@ -181,12 +197,12 @@
           <div class="rev-sub" id="rev-le-sales">0 sales</div>
         </div>
       </div>
-      <div class="rev-card rev-total">
-        <div class="rev-icon">💎</div>
+      <div class="rev-card rev-exl" id="rev-exl-card" style="display: none">
+        <div class="rev-icon">📊</div>
         <div class="rev-data">
-          <div class="rev-label">Total Revenue</div>
-          <div class="rev-value" id="rev-total">$0.00</div>
-          <div class="rev-sub">LE combined</div>
+          <div class="rev-label">EXL Revenue</div>
+          <div class="rev-value" id="rev-exl">$0.00</div>
+          <div class="rev-sub" id="rev-exl-sales">0 sales</div>
         </div>
       </div>
       <div class="rev-card rev-sales">
@@ -194,7 +210,7 @@
         <div class="rev-data">
           <div class="rev-label">Total Sales</div>
           <div class="rev-value" id="rev-sales">0</div>
-          <div class="rev-sub">LE sales</div>
+          <div class="rev-sub" id="rev-sales-sub">sales</div>
         </div>
       </div>
       <div class="rev-card rev-ecpm">
@@ -202,7 +218,7 @@
         <div class="rev-data">
           <div class="rev-label">eCPM</div>
           <div class="rev-value" id="rev-ecpm">$0.00</div>
-          <div class="rev-sub">Revenue / Sends × 1000</div>
+          <div class="rev-sub">Rev / Sends × 1000</div>
         </div>
       </div>
       <div class="rev-card rev-epc">
@@ -210,7 +226,7 @@
         <div class="rev-data">
           <div class="rev-label">EPC</div>
           <div class="rev-value" id="rev-epc">$0.00</div>
-          <div class="rev-sub">Revenue / Clicks</div>
+          <div class="rev-sub">Rev / Clicks</div>
         </div>
       </div>
       <div class="rev-card rev-visitors">
@@ -221,6 +237,115 @@
         </div>
       </div>
     </section>
+
+    <!-- ─── Revenue Domain Breakdown — Collapsible Sections ─── -->
+    <div id="revenue-breakdown" style="display: none">
+      <!-- Combined -->
+      <section class="revenue-breakdown collapse-section open" id="bd-combined">
+        <div class="breakdown-header collapse-toggle" data-target="bd-combined">
+          <svg
+            class="collapse-arrow"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <h2>Combined Revenue Breakdown</h2>
+          <span class="breakdown-subtitle" id="bd-combined-sub"
+            >Per-domain stats</span
+          >
+        </div>
+        <div class="collapse-body">
+          <div class="breakdown-table-wrap">
+            <table class="breakdown-table">
+              <thead>
+                <tr id="bd-combined-thead"></tr>
+              </thead>
+              <tbody id="bd-combined-tbody"></tbody>
+              <tfoot>
+                <tr id="bd-combined-tfoot"></tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
+      <!-- LE -->
+      <section class="revenue-breakdown collapse-section open" id="bd-le">
+        <div class="breakdown-header collapse-toggle" data-target="bd-le">
+          <svg
+            class="collapse-arrow"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <h2>LE Revenue Breakdown</h2>
+          <span class="breakdown-subtitle" id="bd-le-sub"
+            >Per-domain stats</span
+          >
+        </div>
+        <div class="collapse-body">
+          <div class="breakdown-table-wrap">
+            <table class="breakdown-table">
+              <thead>
+                <tr id="bd-le-thead"></tr>
+              </thead>
+              <tbody id="bd-le-tbody"></tbody>
+              <tfoot>
+                <tr id="bd-le-tfoot"></tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
+      <!-- EXL -->
+      <section class="revenue-breakdown collapse-section open" id="bd-exl">
+        <div class="breakdown-header collapse-toggle" data-target="bd-exl">
+          <svg
+            class="collapse-arrow"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <h2>EXL Revenue Breakdown</h2>
+          <span class="breakdown-subtitle" id="bd-exl-sub"
+            >Per-domain stats</span
+          >
+        </div>
+        <div class="collapse-body">
+          <div class="breakdown-table-wrap">
+            <table class="breakdown-table">
+              <thead>
+                <tr id="bd-exl-thead"></tr>
+              </thead>
+              <tbody id="bd-exl-tbody"></tbody>
+              <tfoot>
+                <tr id="bd-exl-tfoot"></tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
 
     <!-- ─── Loading / Error ─── -->
     <div id="loading" class="state-msg" style="display: none">
@@ -252,6 +377,8 @@
             <h3>Revenue &amp; eCPM</h3>
             <div class="chart-legend-inline">
               <span class="leg-dot" style="background: #8b5cf6"></span> LE
+              Revenue
+              <span class="leg-dot" style="background: #f97316"></span> EXL
               Revenue
               <span class="leg-dot" style="background: #06b6d4"></span> eCPM
             </div>

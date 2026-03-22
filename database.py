@@ -159,12 +159,51 @@ class LeadpierSource(Base):
     fetched_at = Column(String, default=lambda: datetime.utcnow().isoformat())
 
 
+class ExltrkSource(Base):
+    """Cached ExcelTrack revenue data — one row per c3 per date."""
+
+    __tablename__ = "exltrk_sources"
+    __table_args__ = (
+        UniqueConstraint("c3", "report_date", name="uq_exl_c3_date"),
+        Index("idx_exl_report_date", "report_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    c3 = Column(String, nullable=False)
+    report_date = Column(String, nullable=False)  # YYYY-MM-DD
+    clicks = Column(Integer, default=0)
+    sales = Column(Integer, default=0)
+    earned = Column(Float, default=0.0)
+    conv = Column(Integer, default=0)
+    epc = Column(Float, default=0.0)
+    fetched_at = Column(String, default=lambda: datetime.utcnow().isoformat())
+
+
 # ---------------------------------------------------------------------------
 # Schema init
 # ---------------------------------------------------------------------------
+def _migrate_schema() -> None:
+    """Add any columns present in the ORM models but missing from the DB."""
+    import sqlite3
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        # Check campaigns table for missing columns
+        cursor.execute("PRAGMA table_info(campaigns)")
+        existing = {row[1] for row in cursor.fetchall()}
+        if "is_test" not in existing:
+            cursor.execute("ALTER TABLE campaigns ADD COLUMN is_test INTEGER DEFAULT 0")
+            logger.info("Migrated: added 'is_test' column to campaigns table")
+            conn.commit()
+    finally:
+        conn.close()
+
+
 def init_schema() -> None:
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, then migrate new columns."""
     Base.metadata.create_all(bind=engine)
+    _migrate_schema()
     logger.info("Database schema initialized at %s", DB_PATH)
 
 
@@ -744,6 +783,101 @@ def get_leadpier_last_sync(report_date: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# ExcelTrack Revenue CRUD
+# ---------------------------------------------------------------------------
+def upsert_exltrk_sources(report_date: str, sources: list[dict]) -> int:
+    """
+    Bulk upsert ExcelTrack c3 records for a given date.
+    Returns the number of records upserted.
+    """
+    session = get_session()
+    count = 0
+    try:
+        for src in sources:
+            c3_val = (src.get("c3") or "").strip()
+            if not c3_val:
+                continue
+            existing = (
+                session.query(ExltrkSource)
+                .filter(
+                    ExltrkSource.c3 == c3_val,
+                    ExltrkSource.report_date == report_date,
+                )
+                .first()
+            )
+            now = datetime.utcnow().isoformat()
+            if existing:
+                existing.clicks = int(src.get("clicks", 0) or 0)
+                existing.sales = int(src.get("sales", 0) or 0)
+                existing.earned = float(src.get("earned", 0) or 0)
+                existing.conv = int(src.get("conv", 0) or 0)
+                existing.epc = float(src.get("epc", 0) or 0)
+                existing.fetched_at = now
+            else:
+                session.add(
+                    ExltrkSource(
+                        c3=c3_val,
+                        report_date=report_date,
+                        clicks=int(src.get("clicks", 0) or 0),
+                        sales=int(src.get("sales", 0) or 0),
+                        earned=float(src.get("earned", 0) or 0),
+                        conv=int(src.get("conv", 0) or 0),
+                        epc=float(src.get("epc", 0) or 0),
+                        fetched_at=now,
+                    )
+                )
+            count += 1
+        session.commit()
+        logger.info("Upserted %d ExcelTrack sources for %s", count, report_date)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+    return count
+
+
+def get_exltrk_sources_by_date(report_date: str) -> list[dict]:
+    """Return all cached ExcelTrack c3 records for a given date."""
+    session = get_session()
+    try:
+        rows = (
+            session.query(ExltrkSource)
+            .filter(ExltrkSource.report_date == report_date)
+            .all()
+        )
+        return [
+            {
+                "c3": r.c3,
+                "clicks": r.clicks,
+                "sales": r.sales,
+                "earned": r.earned,
+                "conv": r.conv,
+                "epc": r.epc,
+                "fetched_at": r.fetched_at,
+            }
+            for r in rows
+        ]
+    finally:
+        session.close()
+
+
+def get_exltrk_last_sync(report_date: str) -> Optional[str]:
+    """Return the most recent fetched_at timestamp for a given date, or None."""
+    session = get_session()
+    try:
+        row = (
+            session.query(ExltrkSource.fetched_at)
+            .filter(ExltrkSource.report_date == report_date)
+            .order_by(ExltrkSource.fetched_at.desc())
+            .first()
+        )
+        return row.fetched_at if row else None
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # Daily aggregated stats (for analytics charts)
 # ---------------------------------------------------------------------------
 def get_daily_aggregated_stats(
@@ -836,13 +970,21 @@ def cleanup_old_data(days: int = 30) -> dict[str, int]:
             .delete(synchronize_session="fetch")
         )
 
+        # ExcelTrack source rows older than cutoff
+        exl_deleted = (
+            session.query(ExltrkSource)
+            .filter(ExltrkSource.report_date < cutoff)
+            .delete(synchronize_session="fetch")
+        )
+
         session.commit()
         logger.info(
-            "Cleanup: removed %d campaigns, %d stats, %d leadpier sources "
-            "(older than %s, %d days)",
+            "Cleanup: removed %d campaigns, %d stats, %d leadpier sources, "
+            "%d exltrk sources (older than %s, %d days)",
             campaigns_deleted,
             stats_deleted,
             lp_deleted,
+            exl_deleted,
             cutoff,
             days,
         )
@@ -850,6 +992,7 @@ def cleanup_old_data(days: int = 30) -> dict[str, int]:
             "campaigns": campaigns_deleted,
             "campaign_stats": stats_deleted,
             "leadpier_sources": lp_deleted,
+            "exltrk_sources": exl_deleted,
             "cutoff_date": cutoff,
         }
     except Exception as e:

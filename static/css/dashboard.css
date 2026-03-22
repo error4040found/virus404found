@@ -148,6 +148,8 @@ body{
 .accent-leads .metric-value{color:#38bdf8}
 .accent-conv .metric-value{color:#8b5cf6}
 .accent-revenue .metric-value{color:#10b981}
+.accent-exl-revenue .metric-value{color:#f97316}
+.accent-combined-revenue .metric-value{color:#eab308}
 .accent-epc .metric-value{color:#f59e0b}
 .accent-ecpm .metric-value{color:#06b6d4}
 
@@ -272,6 +274,10 @@ body{
 .conv-stat strong{color:#8b5cf6!important}
 .revenue-stat{color:#10b981!important}
 .revenue-stat strong{color:#10b981!important}
+.exl-revenue-stat{color:#f97316!important}
+.exl-revenue-stat strong{color:#f97316!important}
+.combined-revenue-stat{color:#eab308!important}
+.combined-revenue-stat strong{color:#eab308!important}
 .epc-stat{color:#f59e0b!important}
 .epc-stat strong{color:#f59e0b!important}
 .ecpm-stat{color:#06b6d4!important}

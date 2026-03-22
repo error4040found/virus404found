@@ -37,6 +37,11 @@ LEADPIER_TOKEN_FILE = os.path.join(
 LEADPIER_TOKEN_EXPIRY_HOURS = 2
 LEADPIER_CACHE_MINUTES = 30  # Don't re-fetch revenue if synced < 30 min ago
 
+# ─── ExcelTrack Revenue API ───────────────────────────────────────
+EXLTRK_API_URL = "https://partner.exltrk.com/api"
+EXLTRK_API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiOTQzMDMzZWE5NWM2NGFmZTc4NjFkMmZhOTYwNjE1MjJlOTQxNGRmNTFlNWZiMzQ0ZGQ0NGI3Njk0MWY2MGRlMzYwMWFlNmQ5YjhhNDIzMzciLCJpYXQiOjE3Njg2Njg5MjcuNzc1Mzg4LCJuYmYiOjE3Njg2Njg5MjcuNzc1MzksImV4cCI6MTgwMDIwNDkyNy43NTIzMjksInN1YiI6IjIyMDg3OCIsInNjb3BlcyI6WyIqIl19.jCzzXdJIaGhlFWAUGk9yCtwch7rBzyC7UhWf_SklYgR3gWCvK0dAae_0il7yzDhbNcfDULXJzus_xnkz9M2mhK8CnSRtkB8iRyrAB0FzHv2qBTpfAOyOAMEdiCKAjzXYc_WV4Spwy9c_Kdneyi0ER_uAhCyjVn0ZX4B1xqUIFCw0OtYxurkeLLx7C6fpovBc_56DwMKWo9KB5bZdG2WBN7XVG9FggKc8-TFYIvXGogXKffQ0-WCUz-GF2Glr9DRkcUE9p0uJlb63TqRuSYu68ihJxkjOKHF6gohnnXV7MgI3kfoqO6GV5wkG87v6XS_ZNyyWwdfnhlza_xi1S8peYapOlWdQEsuNcsjKzQRpsHvGRdzqHcwThJKbh_ezoc7w2VjxeJQQvC1LWaBLt97rdr2X5zME0B1r4gL8HCYu1IEXTVwyry3QYni5aKrBJhRjPxfAGGJwCzxrKEnAS2wS_0kLgOirBOJdksLGNdg1dd9DLGZtP1nuJkH4It45p5P55HAM04RMmESRRxb386rIItD7v2fdvsFNz7cWh9mxrp0Qn0tG_FdrdpKYVQUTi7wQou3SDul7WEoa2aafJ915WCJOHdwnAHBzCpmveLIi48ee8Buln9cRB7j9SLQhkiY29GmNJwFR7LJxnoRcDzAL6tTv_oZ8b8HiDLVTa2_EzWo"
+EXLTRK_CACHE_MINUTES = 30  # Don't re-fetch EXL if synced < 30 min ago
+
 # Pinpointe API Domains Configuration
 DOMAINS = {
     "P2_LBE": {

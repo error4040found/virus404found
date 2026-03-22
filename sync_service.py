@@ -23,8 +23,10 @@ from typing import Any
 import pytz
 
 from config import DOMAINS, TIMEZONE, LIVE_DAYS, MIN_SENDS, LEADPIER_CACHE_MINUTES
+from config import EXLTRK_CACHE_MINUTES
 from pinpoint_api import PinpointAPI
 from leadpier_api import LeadpierAPI
+from exltrk_api import ExltrkAPI
 from database import (
     upsert_domain,
     get_domain_by_code,
@@ -36,6 +38,9 @@ from database import (
     upsert_leadpier_sources,
     get_leadpier_sources_by_date,
     get_leadpier_last_sync,
+    upsert_exltrk_sources,
+    get_exltrk_sources_by_date,
+    get_exltrk_last_sync,
 )
 
 logger = logging.getLogger("sync_service")
@@ -62,13 +67,16 @@ def _is_live(date_str: str) -> bool:
 
 
 def _group_campaigns(
-    rows: list[dict], revenue_map: dict[str, dict] | None = None
+    rows: list[dict],
+    revenue_map: dict[str, dict] | None = None,
+    exl_revenue_map: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Group flat campaign rows by domain, compute totals, and merge revenue."""
     domains: dict[str, dict] = {}
     # Track which campaign names already had revenue assigned to prevent
     # double-counting when the same name appears in multiple rows.
     revenue_assigned: set[str] = set()
+    exl_revenue_assigned: set[str] = set()
 
     for row in rows:
         code = row["domain_code"]
@@ -88,6 +96,10 @@ def _group_campaigns(
                     "conversions": 0,
                     "visitors": 0,
                     "total_leads": 0,
+                    "exl_revenue": 0.0,
+                    "exl_clicks": 0,
+                    "exl_sales": 0,
+                    "combined_revenue": 0.0,
                 },
             }
 
@@ -105,8 +117,28 @@ def _group_campaigns(
         conversions = rev_data["sold_leads"] if rev_data else 0
         visitors = rev_data["visitors"] if rev_data else 0
         total_leads = rev_data["leads"] if rev_data else 0
-        epc = round(revenue / clicks, 2) if clicks > 0 and revenue > 0 else 0.0
-        ecpm = round((revenue / sends) * 1000, 2) if sends > 0 and revenue > 0 else 0.0
+
+        # Revenue from ExcelTrack match — only assign once per unique campaign name
+        if campaign_name not in exl_revenue_assigned:
+            exl_data = (exl_revenue_map or {}).get(campaign_name)
+            exl_revenue_assigned.add(campaign_name)
+        else:
+            exl_data = None
+        exl_revenue = exl_data["earned"] if exl_data else 0.0
+        exl_clicks = exl_data["clicks"] if exl_data else 0
+        exl_sales = exl_data["sales"] if exl_data else 0
+
+        combined_revenue = revenue + exl_revenue
+        epc = (
+            round(combined_revenue / clicks, 2)
+            if clicks > 0 and combined_revenue > 0
+            else 0.0
+        )
+        ecpm = (
+            round((combined_revenue / sends) * 1000, 2)
+            if sends > 0 and combined_revenue > 0
+            else 0.0
+        )
 
         campaign = {
             "statid": row.get("statid", ""),
@@ -124,11 +156,17 @@ def _group_campaigns(
             "unsubs": int(row.get("unsubs") or 0),
             "is_seed": int(row.get("is_seed") or 0),
             "last_fetched_at": row.get("last_fetched_at"),
-            # Revenue fields
+            # Leadpier revenue fields
             "revenue": revenue,
             "conversions": conversions,
             "visitors": visitors,
             "total_leads": total_leads,
+            # ExcelTrack revenue fields
+            "exl_revenue": exl_revenue,
+            "exl_clicks": exl_clicks,
+            "exl_sales": exl_sales,
+            # Combined
+            "combined_revenue": combined_revenue,
             "epc": epc,
             "ecpm": ecpm,
         }
@@ -140,11 +178,15 @@ def _group_campaigns(
         domains[code]["totals"]["conversions"] += conversions
         domains[code]["totals"]["visitors"] += visitors
         domains[code]["totals"]["total_leads"] += total_leads
+        domains[code]["totals"]["exl_revenue"] += exl_revenue
+        domains[code]["totals"]["exl_clicks"] += exl_clicks
+        domains[code]["totals"]["exl_sales"] += exl_sales
+        domains[code]["totals"]["combined_revenue"] += combined_revenue
 
     for d in domains.values():
         s = d["totals"]["sends"]
         c = d["totals"]["clicks"]
-        r = d["totals"]["revenue"]
+        r = d["totals"]["combined_revenue"]
         d["totals"]["open_percent"] = (
             round((d["totals"]["opens"] / s) * 100, 2) if s > 0 else 0
         )
@@ -407,6 +449,73 @@ def _get_revenue_map_for_dates(
     return LeadpierAPI.match_all_campaigns(all_sources, campaign_names)
 
 
+def _get_exltrk_revenue_map_for_dates(
+    start_date: str, end_date: str, campaign_names: list[str]
+) -> dict[str, dict]:
+    """
+    Load cached ExcelTrack c3 sources for each date in range, then match
+    against campaign names.  Returns {campaign_name: {earned, clicks, sales, conv}}.
+    """
+    all_c3: list[dict] = []
+    d = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    while d <= end:
+        day_str = d.strftime("%Y-%m-%d")
+        all_c3.extend(get_exltrk_sources_by_date(day_str))
+        d += timedelta(days=1)
+
+    if not all_c3:
+        return {}
+
+    return ExltrkAPI.match_all_campaigns(all_c3, campaign_names)
+
+
+# ------------------------------------------------------------------
+# ExcelTrack Revenue Sync
+# ------------------------------------------------------------------
+async def sync_exltrk_revenue(report_date: str, force: bool = False) -> dict[str, Any]:
+    """
+    Fetch ExcelTrack revenue data for a given date, cache it, return summary.
+    Skips API call if cached data is < EXLTRK_CACHE_MINUTES old.
+    """
+    if not force:
+        last_sync = get_exltrk_last_sync(report_date)
+        if last_sync:
+            try:
+                last_dt = datetime.fromisoformat(last_sync)
+                age_min = (datetime.utcnow() - last_dt).total_seconds() / 60
+                if age_min < EXLTRK_CACHE_MINUTES:
+                    cached = get_exltrk_sources_by_date(report_date)
+                    logger.info(
+                        "ExcelTrack cache fresh (%.0f min old), %d sources",
+                        age_min,
+                        len(cached),
+                    )
+                    return {
+                        "success": True,
+                        "cached": True,
+                        "sources": len(cached),
+                        "date": report_date,
+                    }
+            except Exception:
+                pass
+
+    exl = ExltrkAPI()
+    try:
+        c3_data = await exl.get_subid_report(report_date, report_date)
+        count = upsert_exltrk_sources(report_date, c3_data)
+        logger.info("ExcelTrack sync: %d sources stored for %s", count, report_date)
+        return {
+            "success": True,
+            "cached": False,
+            "sources": count,
+            "date": report_date,
+        }
+    except Exception as exc:
+        logger.error("ExcelTrack sync failed for %s: %s", report_date, exc)
+        return {"success": False, "error": str(exc), "date": report_date}
+
+
 # ------------------------------------------------------------------
 # Public read helpers (with revenue)
 # ------------------------------------------------------------------
@@ -417,7 +526,11 @@ def get_campaigns_grouped(
     # Gather campaign names and match against cached Leadpier data
     campaign_names = [r["campaign_name"] for r in rows]
     revenue_map = _get_revenue_map_for_dates(start_date, end_date, campaign_names)
-    return _group_campaigns(rows, revenue_map)
+    # Also match against cached ExcelTrack data
+    exl_revenue_map = _get_exltrk_revenue_map_for_dates(
+        start_date, end_date, campaign_names
+    )
+    return _group_campaigns(rows, revenue_map, exl_revenue_map)
 
 
 def get_today_campaigns() -> list[dict]:

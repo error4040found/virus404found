@@ -54,6 +54,7 @@ from sync_service import (
     sync_live_days,
     sync_campaigns,
     sync_revenue,
+    sync_exltrk_revenue,
     get_today_campaigns,
     get_campaigns_grouped,
     get_today_seed_campaigns,
@@ -76,10 +77,11 @@ def scheduled_cleanup():
     try:
         result = cleanup_old_data(days=30)
         logger.info(
-            "Scheduler: cleanup complete — %d campaigns, %d stats, %d leadpier sources removed (cutoff: %s)",
+            "Scheduler: cleanup complete — %d campaigns, %d stats, %d leadpier sources, %d exltrk sources removed (cutoff: %s)",
             result["campaigns"],
             result["campaign_stats"],
             result["leadpier_sources"],
+            result.get("exltrk_sources", 0),
             result["cutoff_date"],
         )
     except Exception as e:
@@ -325,10 +327,12 @@ async def api_testing_range(
 async def api_sync_today():
     try:
         result = await sync_today()
-        # Also sync Leadpier revenue for today
+        # Also sync Leadpier + ExcelTrack revenue for today
         today = datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y-%m-%d")
         rev = await sync_revenue(today, force=True)
+        exl_rev = await sync_exltrk_revenue(today, force=True)
         result["revenue_sync"] = rev
+        result["exltrk_sync"] = exl_rev
         return result
     except Exception as e:
         return JSONResponse(
@@ -344,18 +348,22 @@ async def api_sync_range(
 ):
     try:
         result = await sync_campaigns(startDate, endDate)
-        # Sync revenue for each date in range
+        # Sync Leadpier + ExcelTrack revenue for each date in range
         from datetime import timedelta as td
 
         rev_results = []
+        exl_results = []
         d = datetime.strptime(startDate, "%Y-%m-%d")
         end = datetime.strptime(endDate, "%Y-%m-%d")
         while d <= end:
             day_str = d.strftime("%Y-%m-%d")
             rev = await sync_revenue(day_str, force=True)
+            exl_rev = await sync_exltrk_revenue(day_str, force=True)
             rev_results.append(rev)
+            exl_results.append(exl_rev)
             d += td(days=1)
         result["revenue_sync"] = rev_results
+        result["exltrk_sync"] = exl_results
         return result
     except Exception as e:
         return JSONResponse(
@@ -368,17 +376,21 @@ async def api_sync_range(
 async def api_sync_live():
     try:
         result = await sync_live_days()
-        # Sync revenue for live days
+        # Sync Leadpier + ExcelTrack revenue for live days
         from datetime import timedelta as td
         from config import LIVE_DAYS
 
         tz = pytz.timezone(TIMEZONE)
         rev_results = []
+        exl_results = []
         for i in range(LIVE_DAYS + 1):
             day_str = (datetime.now(tz) - td(days=i)).strftime("%Y-%m-%d")
             rev = await sync_revenue(day_str, force=True)
+            exl_rev = await sync_exltrk_revenue(day_str, force=True)
             rev_results.append(rev)
+            exl_results.append(exl_rev)
         result["revenue_sync"] = rev_results
+        result["exltrk_sync"] = exl_results
         return result
     except Exception as e:
         return JSONResponse(
@@ -391,12 +403,13 @@ async def api_sync_live():
 async def api_sync_revenue(
     date: str = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
 ):
-    """Sync Leadpier revenue data only (no Pinpointe sync)."""
+    """Sync Leadpier + ExcelTrack revenue data only (no Pinpointe sync)."""
     try:
         if not date:
             date = datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y-%m-%d")
         result = await sync_revenue(date, force=True)
-        return result
+        exl_result = await sync_exltrk_revenue(date, force=True)
+        return {"success": True, "leadpier": result, "exltrk": exl_result, "date": date}
     except Exception as e:
         return JSONResponse(
             status_code=500,
@@ -447,28 +460,48 @@ async def api_analytics(
             if d not in daily_revenue:
                 daily_revenue[d] = {
                     "revenue": 0.0,
+                    "exl_revenue": 0.0,
+                    "combined_revenue": 0.0,
                     "visitors": 0,
                     "total_leads": 0,
                     "conversions": 0,
+                    "exl_clicks": 0,
+                    "exl_sales": 0,
                 }
             daily_revenue[d]["revenue"] += camp["revenue"]
+            daily_revenue[d]["exl_revenue"] += camp.get("exl_revenue", 0)
+            daily_revenue[d]["combined_revenue"] += camp.get("combined_revenue", 0)
             daily_revenue[d]["visitors"] += camp["visitors"]
             daily_revenue[d]["total_leads"] += camp["total_leads"]
             daily_revenue[d]["conversions"] += camp["conversions"]
+            daily_revenue[d]["exl_clicks"] += camp.get("exl_clicks", 0)
+            daily_revenue[d]["exl_sales"] += camp.get("exl_sales", 0)
 
     for row in daily_rows:
         rev = daily_revenue.get(row["date"], {})
         revenue = round(rev.get("revenue", 0.0), 2)
+        exl_revenue = round(rev.get("exl_revenue", 0.0), 2)
+        combined_revenue = round(rev.get("combined_revenue", 0.0), 2)
         sends = row["sends"]
         clicks = row["clicks"]
         row["revenue"] = revenue
+        row["exl_revenue"] = exl_revenue
+        row["combined_revenue"] = combined_revenue
         row["visitors"] = rev.get("visitors", 0)
         row["total_leads"] = rev.get("total_leads", 0)
         row["conversions"] = rev.get("conversions", 0)
+        row["exl_clicks"] = rev.get("exl_clicks", 0)
+        row["exl_sales"] = rev.get("exl_sales", 0)
         row["ecpm"] = (
-            round((revenue / sends) * 1000, 2) if sends > 0 and revenue > 0 else 0
+            round((combined_revenue / sends) * 1000, 2)
+            if sends > 0 and combined_revenue > 0
+            else 0
         )
-        row["epc"] = round(revenue / clicks, 2) if clicks > 0 and revenue > 0 else 0
+        row["epc"] = (
+            round(combined_revenue / clicks, 2)
+            if clicks > 0 and combined_revenue > 0
+            else 0
+        )
 
     # Build domain summary from domain groups
     domain_summary = []
@@ -484,6 +517,10 @@ async def api_analytics(
                 "bounces": t["bounces"],
                 "unsubs": t["unsubs"],
                 "revenue": t["revenue"],
+                "exl_revenue": t.get("exl_revenue", 0),
+                "combined_revenue": t.get("combined_revenue", 0),
+                "exl_clicks": t.get("exl_clicks", 0),
+                "exl_sales": t.get("exl_sales", 0),
                 "conversions": t["conversions"],
                 "visitors": t["visitors"],
                 "total_leads": t["total_leads"],
@@ -501,6 +538,10 @@ async def api_analytics(
     tot_bounces = sum(d["bounces"] for d in domain_summary)
     tot_unsubs = sum(d["unsubs"] for d in domain_summary)
     tot_revenue = sum(d["revenue"] for d in domain_summary)
+    tot_exl_revenue = sum(d["exl_revenue"] for d in domain_summary)
+    tot_combined_revenue = sum(d["combined_revenue"] for d in domain_summary)
+    tot_exl_clicks = sum(d["exl_clicks"] for d in domain_summary)
+    tot_exl_sales = sum(d["exl_sales"] for d in domain_summary)
     tot_conversions = sum(d["conversions"] for d in domain_summary)
     tot_visitors = sum(d["visitors"] for d in domain_summary)
     tot_total_leads = sum(d["total_leads"] for d in domain_summary)
@@ -512,19 +553,23 @@ async def api_analytics(
         "bounces": tot_bounces,
         "unsubs": tot_unsubs,
         "revenue": round(tot_revenue, 2),
+        "exl_revenue": round(tot_exl_revenue, 2),
+        "combined_revenue": round(tot_combined_revenue, 2),
+        "exl_clicks": tot_exl_clicks,
+        "exl_sales": tot_exl_sales,
         "conversions": tot_conversions,
         "visitors": tot_visitors,
         "total_leads": tot_total_leads,
         "open_pct": round((tot_opens / tot_sends) * 100, 2) if tot_sends > 0 else 0,
         "click_pct": round((tot_clicks / tot_sends) * 100, 2) if tot_sends > 0 else 0,
         "ecpm": (
-            round((tot_revenue / tot_sends) * 1000, 2)
-            if tot_sends > 0 and tot_revenue > 0
+            round((tot_combined_revenue / tot_sends) * 1000, 2)
+            if tot_sends > 0 and tot_combined_revenue > 0
             else 0
         ),
         "epc": (
-            round(tot_revenue / tot_clicks, 2)
-            if tot_clicks > 0 and tot_revenue > 0
+            round(tot_combined_revenue / tot_clicks, 2)
+            if tot_clicks > 0 and tot_combined_revenue > 0
             else 0
         ),
     }
@@ -552,12 +597,14 @@ async def api_spillover(
       1) %{SHORT_CODE}% on `date` → total domain revenue today
       2) %{MMDD}-{SHORT_CODE}% on `date` → revenue from today's campaigns only
     Spillover = total - today's campaigns.
-    Returns live data, no DB involved.
+
+    Also computes ExcelTrack spillover using cached c3 data.
 
     Short codes are extracted from actual campaign names in the DB
     (pattern: MMDD-{SHORT}-eN), not from the domain code suffix.
     """
     from leadpier_api import LeadpierAPI
+    from exltrk_api import ExltrkAPI
     import asyncio
     import re as _re
     from datetime import timedelta as _td
@@ -569,19 +616,51 @@ async def api_spillover(
     mmdd = date[5:7] + date[8:10]
 
     # Get campaigns from last 90 days to reliably map domain codes → actual short codes
-    # (not just the spillover date, since a domain may have no campaigns that day)
     mapping_start = (datetime.strptime(date, "%Y-%m-%d") - _td(days=90)).strftime(
         "%Y-%m-%d"
     )
     all_campaigns = get_campaigns_by_date_range(mapping_start, date)
     # Build domain_code → set of short codes from campaign names
-    # Campaign name pattern: MMDD-{SHORT}-eN  (e.g. "0314-AFW-e4", "0314-fc-e5")
     domain_shorts: dict[str, set[str]] = {}
     pattern = _re.compile(r"^\d{4}-([a-zA-Z]+)-")
     for c in all_campaigns:
         m = pattern.match(c["campaign_name"])
         if m:
             domain_shorts.setdefault(c["domain_code"], set()).add(m.group(1).lower())
+
+    # Compute ExcelTrack spillover from cached c3 data
+    # Total EXL revenue for date = all c3 entries for that date
+    # Today's EXL = only c3 entries matching today's campaign cores (MMDD-*)
+    from database import get_exltrk_sources_by_date
+    from leadpier_api import _extract_core
+
+    exl_sources = get_exltrk_sources_by_date(date)
+    # Build total EXL revenue per domain short code
+    # c3 format: "MMDD-SHORT-eN" → domain short = second part if multi-part, else whole
+    exl_total_by_domain: dict[str, float] = {}
+    exl_today_by_domain: dict[str, float] = {}
+
+    # Map c3 → domain: extract short code from c3 value
+    for src in exl_sources:
+        c3 = src.get("c3", "")
+        earned = float(src.get("earned", 0) or 0)
+        # c3 is a core name like "0314-ivr-e3" or "0314-AFW-e4"
+        parts = c3.split("-")
+        if len(parts) >= 2:
+            short = parts[1].lower()
+        else:
+            short = c3.lower()
+
+        # Find which domain code this short belongs to
+        for dcode, shorts_set in domain_shorts.items():
+            if short in shorts_set:
+                exl_total_by_domain[dcode] = exl_total_by_domain.get(dcode, 0) + earned
+                # Check if this c3 is from today's campaigns (starts with MMDD)
+                if c3.startswith(mmdd):
+                    exl_today_by_domain[dcode] = (
+                        exl_today_by_domain.get(dcode, 0) + earned
+                    )
+                break
 
     async def fetch_domain_spillover(d):
         code = d["code"]  # e.g. "P2_AFW"
@@ -636,6 +715,13 @@ async def api_spillover(
                 "spillover_visitors": total_visitors - today_visitors,
                 "spillover_leads": total_leads - today_leads,
                 "spillover_sold": total_sold - today_sold,
+                # ExcelTrack spillover
+                "exl_total_revenue": round(exl_total_by_domain.get(code, 0), 2),
+                "exl_today_revenue": round(exl_today_by_domain.get(code, 0), 2),
+                "exl_spillover_revenue": round(
+                    exl_total_by_domain.get(code, 0) - exl_today_by_domain.get(code, 0),
+                    2,
+                ),
             }
         except Exception as e:
             logger.warning("Spillover fetch failed for %s: %s", code, e)
@@ -649,6 +735,9 @@ async def api_spillover(
                 "spillover_visitors": 0,
                 "spillover_leads": 0,
                 "spillover_sold": 0,
+                "exl_total_revenue": 0,
+                "exl_today_revenue": 0,
+                "exl_spillover_revenue": 0,
             }
 
     results = await asyncio.gather(*[fetch_domain_spillover(d) for d in domains])
