@@ -284,8 +284,13 @@ function renderDomainPage() {
 
     container.innerHTML = pageItems.map(d => {
         const sp = spilloverData[d.code];
-        const hasSpill = sp && (sp.spillover_revenue !== 0 || sp.total_revenue !== 0 || (sp.exl_total_revenue || 0) !== 0 || (sp.exl_spillover_revenue || 0) !== 0);
-        const spilloverHtml = hasSpill ? `
+        const spillLoaded = Object.keys(spilloverData).length > 0;
+        const hasSpill = sp && !sp.error;
+        const hasError = sp && sp.error;
+        const hasData  = hasSpill && (sp.spillover_revenue !== 0 || sp.total_revenue !== 0 || (sp.exl_total_revenue || 0) !== 0 || (sp.exl_spillover_revenue || 0) !== 0);
+        let spilloverHtml = '';
+        if (hasData) {
+            spilloverHtml = `
             <div class="spillover-bar">
                 <div class="spillover-title">📊 Spillover (prev. campaigns revenue today)</div>
                 <div class="spillover-stats">
@@ -302,8 +307,22 @@ function renderDomainPage() {
                     <span class="spill-stat"><strong>EXL Today's</strong> $${money(sp.exl_today_revenue || 0)}</span>
                     <span class="spill-stat spill-highlight"><strong>EXL Spillover</strong> $${money(sp.exl_spillover_revenue || 0)}</span>
                 </div>` : ''}
-            </div>` : ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns' && !Object.keys(spilloverData).length ?
-            `<div class="spillover-bar spillover-loading"><span class="spillover-spinner"></span> Loading spillover data…</div>` : '');
+            </div>`;
+        } else if (hasError) {
+            spilloverHtml = `
+            <div class="spillover-bar spillover-error">
+                <div class="spillover-title">⚠️ Spillover fetch failed</div>
+                <div class="spillover-stats"><span class="spill-stat" style="color:#f87171">${esc(sp.error)}</span></div>
+            </div>`;
+        } else if (hasSpill && !hasData) {
+            spilloverHtml = `
+            <div class="spillover-bar spillover-zero">
+                <div class="spillover-title">📊 Spillover</div>
+                <div class="spillover-stats"><span class="spill-stat" style="color:var(--text-dim)">No spillover revenue for this date</span></div>
+            </div>`;
+        } else if ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns' && !spillLoaded) {
+            spilloverHtml = `<div class="spillover-bar spillover-loading"><span class="spillover-spinner"></span> Loading spillover data…</div>`;
+        }
 
         return `
         <div class="domain-card">
