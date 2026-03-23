@@ -1,4 +1,4 @@
-/* ================================================================
+﻿/* ================================================================
    dashboard.js  –  Shakta Campaign Dashboard (FastAPI frontend)
    ================================================================ */
 
@@ -12,7 +12,7 @@ let allDomains      = [];
 let domainPage      = 1;
 let domainsPerPage  = 3;
 let domainSearchTerm = '';
-let spilloverData    = {};  // keyed by domain code
+let spilloverData    = {};
 
 // ─── Bootstrap ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -119,21 +119,20 @@ async function loadCampaigns() {
         if (!data.success) throw new Error(data.error || 'Load failed');
 
         // Auto-sync if today/yesterday view returns no data (first visit / new day)
+        // Use sync/live to pull last 3 days so previous-day campaigns are also stored
         if ((!data.domains || !data.domains.length) && (currentView === 'today' || currentView === 'yesterday') && !isSyncing) {
             isLoading = false;
             showLoading(false);
-            await syncCampaigns();
+            await syncLiveDays();
             return;
         }
 
         displayCampaigns(data.domains);
         updateLastSync();
 
-        // Fetch spillover data (live from Leadpier, for today and yesterday views)
-        // Use the date returned by the server (EST) to avoid browser-UTC mismatch
+        // Load spillover data for today/yesterday view (best-effort, non-blocking)
         if ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns') {
-            const spillDate = data.date || data.startDate;
-            loadSpillover(spillDate);
+            loadSpillover();
         }
     } catch (err) {
         showError(err.message);
@@ -143,7 +142,7 @@ async function loadCampaigns() {
     }
 }
 
-// ─── Sync from Pinpointe API ────────────────────────────────────
+// ─── Sync from Insight Bridge API ────────────────────────────────────
 async function syncCampaigns() {
     if (isSyncing) return;
     try {
@@ -153,7 +152,7 @@ async function syncCampaigns() {
 
         let url;
         if (currentView === 'today') {
-            url = '/api/sync/today';
+            url = '/api/sync/live';   // sync live days (today + 2 days back)
         } else {
             url = `/api/sync/range?startDate=${val('start-date')}&endDate=${val('end-date')}`;
         }
@@ -177,58 +176,30 @@ async function syncCampaigns() {
     }
 }
 
-// ─── Spillover: live Leadpier fetch ──────────────────────────────
-async function loadSpillover(dateStr) {
+// ─── Sync live days (initial load / first visit) ────────────────
+async function syncLiveDays() {
+    if (isSyncing) return;
     try {
-        if (!dateStr) {
-            // Fallback: compute from browser (should not happen with server date)
-            if (currentView === 'yesterday') {
-                const yd = new Date(); yd.setDate(yd.getDate() - 1);
-                dateStr = yd.toISOString().slice(0, 10);
-            } else {
-                dateStr = new Date().toISOString().slice(0, 10);
-            }
-        }
-        const res = await fetch(`/api/spillover?date=${dateStr}`);
+        isSyncing = true;
+        setSyncing(true);
+        hideError();
+
+        const res  = await fetch('/api/sync/live', { method: 'POST' });
         const data = await res.json();
-        if (!data.success) return;
 
-        spilloverData = {};
-        (data.domains || []).forEach(d => { spilloverData[d.code] = d; });
+        if (data.errors && data.errors.length) {
+            showError(data.errors.map(e => `${e.domain||''}: ${e.error||''}`).join(' | '));
+        }
+        if (!data.success && (!data.errors || !data.errors.length)) {
+            throw new Error(data.error || 'Sync failed');
+        }
 
-        // Re-render the current page to inject spillover rows
-        renderDomainPage();
-        // Update grand totals spillover
-        renderGrandSpillover();
-    } catch (e) { /* spillover is best-effort, don't block UI */ }
-}
-
-function renderGrandSpillover() {
-    let totalSpillRev = 0, totalSpillVisitors = 0, totalSpillLeads = 0, totalSpillSold = 0;
-    let totalAllRev = 0;
-    let totalExlSpillRev = 0;
-    for (const code in spilloverData) {
-        const s = spilloverData[code];
-        totalSpillRev += s.spillover_revenue || 0;
-        totalSpillVisitors += s.spillover_visitors || 0;
-        totalSpillLeads += s.spillover_leads || 0;
-        totalSpillSold += s.spillover_sold || 0;
-        totalAllRev += (s.total_revenue || 0) + (s.exl_total_revenue || 0);
-        totalExlSpillRev += s.exl_spillover_revenue || 0;
-    }
-    const hasData = Object.keys(spilloverData).length > 0;
-    const spillCard = document.getElementById('spillover-card');
-    const liveCard  = document.getElementById('live-rev-card');
-    if (spillCard) spillCard.style.display = hasData ? '' : 'none';
-    if (liveCard)  liveCard.style.display  = hasData ? '' : 'none';
-
-    const spillEl = el('total-spillover');
-    if (spillEl) {
-        spillEl.textContent = `$${money(totalSpillRev + totalExlSpillRev)}`;
-    }
-    const totalRevLive = el('total-revenue-live');
-    if (totalRevLive) {
-        totalRevLive.textContent = `$${money(totalAllRev)}`;
+        await loadCampaigns();
+    } catch (err) {
+        showError(err.message);
+    } finally {
+        isSyncing = false;
+        setSyncing(false);
     }
 }
 
@@ -258,6 +229,58 @@ function displayCampaigns(domains) {
 }
 
 // ─── Filter + paginate + render current domain page ──────────────
+async function loadSpillover() {
+    try {
+        let dateStr;
+        if (currentView === 'yesterday') {
+            const yd = new Date(); yd.setDate(yd.getDate() - 1);
+            dateStr = yd.toISOString().slice(0, 10);
+        } else {
+            dateStr = new Date().toISOString().slice(0, 10);
+        }
+        const res = await fetch(`/api/spillover?date=${dateStr}`);
+        const data = await res.json();
+        if (!data.success) return;
+
+        spilloverData = {};
+        (data.domains || []).forEach(d => { spilloverData[d.code] = d; });
+
+        // Re-render the current page to inject spillover rows
+        renderDomainPage();
+        // Update grand totals spillover
+        renderGrandSpillover();
+    } catch (e) { /* spillover is best-effort, don't block UI */ }
+}
+
+function renderGrandSpillover() {
+    let totalSpillRev = 0, totalSpillVisitors = 0, totalSpillLeads = 0, totalSpillSold = 0;
+    let totalAllRev = 0;
+    let totalExlSpillRev = 0;
+    for (const code in spilloverData) {
+        const s = spilloverData[code];
+        totalSpillRev += s.spillover_revenue || 0;
+        totalSpillVisitors += s.spillover_visitors || 0;
+        totalSpillLeads += s.spillover_leads || 0;
+        totalSpillSold += s.spillover_sold || 0;
+        totalAllRev += s.total_revenue || 0;
+        totalExlSpillRev += s.exl_spillover_revenue || 0;
+    }
+    const hasData = Object.keys(spilloverData).length > 0;
+    const spillCard = document.getElementById('spillover-card');
+    const liveCard  = document.getElementById('live-rev-card');
+    if (spillCard) spillCard.style.display = hasData ? '' : 'none';
+    if (liveCard)  liveCard.style.display  = hasData ? '' : 'none';
+
+    const spillEl = el('total-spillover');
+    if (spillEl) {
+        spillEl.textContent = `$${money(totalSpillRev + totalExlSpillRev)}`;
+    }
+    const totalRevLive = el('total-revenue-live');
+    if (totalRevLive) {
+        totalRevLive.textContent = `$${money(totalAllRev)}`;
+    }
+}
+
 function renderDomainPage() {
     const container  = document.getElementById('campaigns-container');
     const noData     = document.getElementById('no-data');
@@ -284,13 +307,8 @@ function renderDomainPage() {
 
     container.innerHTML = pageItems.map(d => {
         const sp = spilloverData[d.code];
-        const spillLoaded = Object.keys(spilloverData).length > 0;
-        const hasSpill = sp && !sp.error;
-        const hasError = sp && sp.error;
-        const hasData  = hasSpill && (sp.spillover_revenue !== 0 || sp.total_revenue !== 0 || (sp.exl_total_revenue || 0) !== 0 || (sp.exl_spillover_revenue || 0) !== 0);
-        let spilloverHtml = '';
-        if (hasData) {
-            spilloverHtml = `
+        const hasSpill = sp && (sp.spillover_revenue !== 0 || sp.total_revenue !== 0);
+        const spilloverHtml = hasSpill ? `
             <div class="spillover-bar">
                 <div class="spillover-title">📊 Spillover (prev. campaigns revenue today)</div>
                 <div class="spillover-stats">
@@ -303,26 +321,12 @@ function renderDomainPage() {
                 </div>
                 ${(sp.exl_total_revenue || 0) > 0 || (sp.exl_spillover_revenue || 0) !== 0 ? `
                 <div class="spillover-stats" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06);">
-                    <span class="spill-stat"><strong>TLG Total Rev</strong> $${money(sp.exl_total_revenue || 0)}</span>
-                    <span class="spill-stat"><strong>TLG Today's</strong> $${money(sp.exl_today_revenue || 0)}</span>
-                    <span class="spill-stat spill-highlight"><strong>TLG Spillover</strong> $${money(sp.exl_spillover_revenue || 0)}</span>
+                    <span class="spill-stat"><strong>EXL Total Rev</strong> $${money(sp.exl_total_revenue || 0)}</span>
+                    <span class="spill-stat"><strong>EXL Today's</strong> $${money(sp.exl_today_revenue || 0)}</span>
+                    <span class="spill-stat spill-highlight"><strong>EXL Spillover</strong> $${money(sp.exl_spillover_revenue || 0)}</span>
                 </div>` : ''}
-            </div>`;
-        } else if (hasError) {
-            spilloverHtml = `
-            <div class="spillover-bar spillover-error">
-                <div class="spillover-title">⚠️ Spillover fetch failed</div>
-                <div class="spillover-stats"><span class="spill-stat" style="color:#f87171">${esc(sp.error)}</span></div>
-            </div>`;
-        } else if (hasSpill && !hasData) {
-            spilloverHtml = `
-            <div class="spillover-bar spillover-zero">
-                <div class="spillover-title">📊 Spillover</div>
-                <div class="spillover-stats"><span class="spill-stat" style="color:var(--text-dim)">No spillover revenue for this date</span></div>
-            </div>`;
-        } else if ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns' && !spillLoaded) {
-            spilloverHtml = `<div class="spillover-bar spillover-loading"><span class="spillover-spinner"></span> Loading spillover data…</div>`;
-        }
+            </div>` : ((currentView === 'today' || currentView === 'yesterday') && currentReport === 'campaigns' && !Object.keys(spilloverData).length ?
+            `<div class="spillover-bar spillover-loading"><span class="spillover-spinner"></span> Loading spillover data…</div>` : '');
 
         return `
         <div class="domain-card">
@@ -342,7 +346,7 @@ function renderDomainPage() {
                     <span class="domain-stat leads-stat"><strong>T.LEADS</strong> ${fmt(d.totals.total_leads)}</span>
                     <span class="domain-stat conv-stat"><strong>S.LEADS</strong> ${fmt(d.totals.conversions)}</span>
                     <span class="domain-stat revenue-stat"><strong>LE REV</strong> $${money(d.totals.revenue)}</span>
-                    <span class="domain-stat exl-revenue-stat"><strong>TLG REV</strong> $${money(d.totals.exl_revenue || 0)}</span>
+                    <span class="domain-stat exl-revenue-stat"><strong>EXL REV</strong> $${money(d.totals.exl_revenue || 0)}</span>
                     <span class="domain-stat combined-revenue-stat"><strong>COMB REV</strong> $${money(d.totals.combined_revenue || 0)}</span>
                     <span class="domain-stat epc-stat"><strong>EPC</strong> $${money(d.totals.epc)}</span>
                     <span class="domain-stat ecpm-stat"><strong>eCPM</strong> $${money(d.totals.ecpm)}</span>
@@ -365,7 +369,7 @@ function renderDomainPage() {
                             <th class="col-num-sm">T.Leads</th>
                             <th class="col-num-sm">S.Leads</th>
                             <th class="col-money">LE Rev</th>
-                            <th class="col-money">TLG Rev</th>
+                            <th class="col-money">EXL Rev</th>
                             <th class="col-money">Comb Rev</th>
                             <th class="col-money">EPC</th>
                             <th class="col-money">eCPM</th>

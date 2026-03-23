@@ -12,7 +12,7 @@
     />
   </head>
   <body>
-    <!-- â”€â”€â”€ Header â”€â”€â”€ -->
+    <!-- ─── Header ─── -->
     <header class="header">
       <div class="header-left">
         <div class="logo">
@@ -119,12 +119,12 @@
       </div>
     </header>
 
-    <!-- â”€â”€â”€ Toolbar â”€â”€â”€ -->
+    <!-- ─── Toolbar ─── -->
     <div class="toolbar">
       <div class="tab-group">
-        <button class="tab active" data-report="campaigns">ðŸ“Š Campaigns</button>
-        <button class="tab" data-report="seeds">ðŸŒ± Seeds</button>
-        <button class="tab" data-report="testing">ðŸ§ª Testing</button>
+        <button class="tab active" data-report="campaigns">📊 Campaigns</button>
+        <button class="tab" data-report="seeds">🌱 Seeds</button>
+        <button class="tab" data-report="testing">🧪 Testing</button>
       </div>
 
       <div class="view-group">
@@ -141,12 +141,12 @@
       </div>
 
       <div class="domain-search">
-        <label>ðŸ”</label>
-        <input type="text" id="domain-search" placeholder="Search domainsâ€¦" />
+        <label>🔍</label>
+        <input type="text" id="domain-search" placeholder="Search domains…" />
       </div>
     </div>
 
-    <!-- â”€â”€â”€ Grand Totals â”€â”€â”€ -->
+    <!-- ─── Grand Totals ─── -->
     <section id="grand-totals" class="totals-grid" style="display: none">
       <div class="metric-card">
         <div class="metric-label">Total Sends</div>
@@ -187,7 +187,7 @@
         <div class="metric-value" id="total-revenue">$0.00</div>
       </div>
       <div class="metric-card accent-exl-revenue">
-        <div class="metric-label">TLG Revenue</div>
+        <div class="metric-label">EXL Revenue</div>
         <div class="metric-value" id="total-exl-revenue">$0.00</div>
       </div>
       <div class="metric-card accent-combined-revenue">
@@ -220,21 +220,21 @@
       </div>
     </section>
 
-    <!-- â”€â”€â”€ State indicators â”€â”€â”€ -->
+    <!-- ─── State indicators ─── -->
     <div id="loading" class="state-msg" style="display: none">
       <div class="spinner"></div>
       <span>Loading campaigns&hellip;</span>
     </div>
     <div id="error-message" class="state-msg error" style="display: none"></div>
     <div id="no-data" class="state-msg" style="display: none">
-      <span class="empty-icon">ðŸ“­</span> No campaigns found for the selected
+      <span class="empty-icon">📭</span> No campaigns found for the selected
       period.
     </div>
 
-    <!-- â”€â”€â”€ Campaign cards â”€â”€â”€ -->
+    <!-- ─── Campaign cards ─── -->
     <main id="campaigns-container" class="campaigns-container"></main>
 
-    <!-- â”€â”€â”€ Domain pagination â”€â”€â”€ -->
+    <!-- ─── Domain pagination ─── -->
     <div
       id="domain-pagination"
       class="domain-pagination"
