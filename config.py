@@ -30,7 +30,7 @@ SESSION_SECRET_KEY = "pnpt-dash-s3cr3t-k3y-2026-xK9mQ4vL"  # Change in productio
 LEADPIER_AUTH_URL = "https://webapi.leadpier.com/v1/frontend/authenticate"
 LEADPIER_DATA_URL = "https://webapi.leadpier.com/v1/api/stats/user/org/sources"
 LEADPIER_USERNAME = "hello@shaktallc.com"
-LEADPIER_PASSWORD = "Shakta123!"
+LEADPIER_PASSWORD = "JaiShreeRam123!"
 LEADPIER_TOKEN_FILE = os.path.join(
     os.path.dirname(__file__), "database", "leadpier_token.json"
 )
